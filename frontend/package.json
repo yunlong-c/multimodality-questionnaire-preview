@@ -1,0 +1,22 @@
+{
+  "name": "multimodality-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "tsx --test tests/catalog-runtime.test.ts tests/participant-copy.test.ts tests/questionnaire-navigation.test.ts tests/video-loading.test.ts"
+  },
+  "dependencies": {
+    "@jspsych/plugin-survey-html-form": "latest",
+    "jspsych": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "tsx": "^4.23.1",
+    "typescript": "latest",
+    "vite": "latest"
+  }
+}

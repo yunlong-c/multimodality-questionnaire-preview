@@ -1,0 +1,16 @@
+node_modules/
+frontend/node_modules/
+frontend/dist/
+.env
+.env.*
+*.log
+*.out.log
+*.err.log
+.DS_Store
+Thumbs.db
+
+# The static collaborator preview must never contain private outcomes or data.
+**/outcome_catalog*.json
+**/source-workbooks/
+**/data/
+**/exports/

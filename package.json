@@ -1,0 +1,12 @@
+{
+  "name": "multimodality-questionnaire-github-preview",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "build": "npm run build -w frontend",
+    "test": "npm run test -w frontend"
+  }
+}

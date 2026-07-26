@@ -1,0 +1,268 @@
+:root {
+  color: #10233d;
+  background: #f4f6f8;
+  font-family:
+    Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #f4f6f8;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.admin-shell {
+  width: min(100% - 32px, 1040px);
+  margin: 0 auto;
+  padding: 48px 0 32px;
+}
+
+.admin-shell--login {
+  display: grid;
+  min-height: calc(100vh - 80px);
+  place-items: center;
+}
+
+.admin-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+.admin-header h1,
+.admin-login-card h1 {
+  margin: 5px 0 0;
+  font-size: clamp(30px, 5vw, 42px);
+  letter-spacing: -0.03em;
+}
+
+.admin-eyebrow {
+  margin: 0;
+  color: #1f62a5;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.admin-lead,
+.admin-card p {
+  color: #53657a;
+  line-height: 1.7;
+}
+
+.admin-card {
+  margin-bottom: 18px;
+  padding: 28px;
+  border: 1px solid #d9e0e8;
+  border-radius: 16px;
+  background: #ffffff;
+}
+
+.admin-login-card {
+  width: min(100%, 460px);
+}
+
+.admin-card h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.admin-form {
+  display: grid;
+  gap: 18px;
+  margin-top: 26px;
+}
+
+.admin-form label {
+  display: grid;
+  gap: 8px;
+  color: #263b55;
+  font-weight: 650;
+}
+
+.admin-form input {
+  min-height: 48px;
+  padding: 10px 13px;
+  border: 1px solid #bdc9d6;
+  border-radius: 9px;
+  color: #10233d;
+  font-size: 16px;
+}
+
+.admin-form input:focus {
+  border-color: #2368ae;
+  outline: 3px solid #dceafa;
+}
+
+.admin-button {
+  min-height: 44px;
+  padding: 10px 17px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.admin-button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.admin-button--primary {
+  color: #ffffff;
+  background: #1f62a5;
+}
+
+.admin-button--secondary {
+  color: #174f86;
+  border-color: #b9cbe0;
+  background: #f7fafc;
+}
+
+.admin-button--quiet {
+  color: #40566f;
+  border-color: #ccd5df;
+  background: #ffffff;
+}
+
+.admin-account,
+.admin-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.admin-account span {
+  color: #53657a;
+}
+
+.admin-feedback {
+  min-height: 1.5em;
+  margin: 0;
+  color: #9a3a2d;
+  font-size: 14px;
+}
+
+.admin-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.admin-stat {
+  padding: 18px;
+  border: 1px solid #e0e6ec;
+  border-radius: 11px;
+  background: #f8fafc;
+}
+
+.admin-stat span {
+  display: block;
+  color: #64758a;
+  font-size: 14px;
+}
+
+.admin-stat strong {
+  display: block;
+  margin-top: 8px;
+  color: #10233d;
+  font-size: 29px;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-gate {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 9px;
+  font-weight: 650;
+}
+
+.admin-gate--open {
+  color: #116547;
+  background: #edf8f2;
+}
+
+.admin-gate--closed {
+  color: #8f3c31;
+  background: #fff2ef;
+}
+
+.admin-download-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.admin-audit-panel summary {
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 750;
+}
+
+.regulatory-footer {
+  width: min(100% - 32px, 1040px);
+  margin: 0 auto;
+  padding: 0 0 24px;
+  color: #66758a;
+  font-size: 13px;
+  text-align: center;
+}
+
+.regulatory-footer a {
+  color: inherit;
+  text-decoration: none;
+}
+
+@media (max-width: 720px) {
+  .admin-shell {
+    width: min(100% - 24px, 1040px);
+    padding-top: 24px;
+  }
+
+  .admin-header,
+  .admin-section-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .admin-account {
+    justify-content: flex-start;
+  }
+
+  .admin-card {
+    padding: 21px;
+    border-radius: 13px;
+  }
+
+  .admin-stat-grid,
+  .admin-download-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 430px) {
+  .admin-stat-grid,
+  .admin-download-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-download-grid .admin-button {
+    width: 100%;
+  }
+}
