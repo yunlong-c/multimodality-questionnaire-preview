@@ -9,6 +9,8 @@ multimodality questionnaire.
 - GitHub Pages serves the application while the same repository's raw-file
   endpoint serves the original Graph, Video, and terminal-frame assets. This
   keeps the Pages deployment well below its site-size ceiling.
+- The locally verified production build is published from the `gh-pages`
+  branch; the research source and audited assets remain on `main`.
 - The five questions are sampled with the same client-side research rules as
   the production questionnaire.
 - There is no server or shared database. A completed response is stored only
