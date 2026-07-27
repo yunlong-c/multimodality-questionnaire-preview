@@ -135,13 +135,18 @@ async function claimMirrors(
   }
 }
 
-function formEndpoint(): URL {
+export function submissionMirrorEndpoint(
+  endpointUrl?: string,
+): URL {
   const raw =
-    process.env.DEPLOY_PRIME_URL?.trim()
+    endpointUrl?.trim()
+    || process.env.MMQ_FORMS_ENDPOINT?.trim()
+    || process.env.DEPLOY_PRIME_URL?.trim()
     || process.env.URL?.trim();
   if (!raw) {
     throw new Error(
-      "DEPLOY_PRIME_URL or URL is required for Netlify Forms mirroring.",
+      "A request origin or MMQ_FORMS_ENDPOINT is required for "
+      + "Netlify Forms mirroring.",
     );
   }
   const url = new URL("/", raw);
@@ -186,6 +191,7 @@ export function buildSubmissionMirrorFormBody(
 async function postMirror(
   row: SubmissionMirrorRow,
   fetchImplementation: typeof fetch,
+  endpointUrl?: string,
 ): Promise<number> {
   const controller = new AbortController();
   const timeout = globalThis.setTimeout(
@@ -193,14 +199,17 @@ async function postMirror(
     MIRROR_TIMEOUT_MS,
   );
   try {
-    const response = await fetchImplementation(formEndpoint(), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+    const response = await fetchImplementation(
+      submissionMirrorEndpoint(endpointUrl),
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+        },
+        body: buildSubmissionMirrorFormBody(row).toString(),
+        signal: controller.signal,
       },
-      body: buildSubmissionMirrorFormBody(row).toString(),
-      signal: controller.signal,
-    });
+    );
     if (!response.ok) {
       throw Object.assign(
         new Error(`Netlify Forms returned HTTP ${response.status}.`),
@@ -277,6 +286,7 @@ async function markFailed(
 export interface ProcessMirrorOptions {
   pool?: DatabasePool;
   fetchImplementation?: typeof fetch;
+  endpointUrl?: string;
   limit?: number;
   receiptId?: string | null;
 }
@@ -284,6 +294,7 @@ export interface ProcessMirrorOptions {
 export async function processSubmissionMirrors({
   pool = getDatabase().pool,
   fetchImplementation = fetch,
+  endpointUrl,
   limit = 50,
   receiptId = null,
 }: ProcessMirrorOptions = {}): Promise<{
@@ -299,7 +310,11 @@ export async function processSubmissionMirrors({
   let failed = 0;
   for (const row of rows) {
     try {
-      const status = await postMirror(row, fetchImplementation);
+      const status = await postMirror(
+        row,
+        fetchImplementation,
+        endpointUrl,
+      );
       await markAccepted(pool, row, status);
       accepted += 1;
     } catch (error) {
@@ -312,6 +327,11 @@ export async function processSubmissionMirrors({
 
 export async function processSubmissionMirrorReceipt(
   receiptId: string,
+  endpointUrl?: string,
 ): Promise<void> {
-  await processSubmissionMirrors({ receiptId, limit: 1 });
+  await processSubmissionMirrors({
+    receiptId,
+    endpointUrl,
+    limit: 1,
+  });
 }

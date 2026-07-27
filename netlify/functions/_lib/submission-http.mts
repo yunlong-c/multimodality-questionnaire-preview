@@ -15,7 +15,10 @@ import {
 } from "./submission-validation.mts";
 
 type RepositoryFactory = () => SubmissionRepository;
-type MirrorDispatcher = (receiptId: string) => Promise<unknown>;
+type MirrorDispatcher = (
+  receiptId: string,
+  endpointUrl: string,
+) => Promise<unknown>;
 
 export interface SubmissionFunctionContext {
   ip?: string;
@@ -143,7 +146,15 @@ export function createSubmitHandler(
         deploy: deploymentMetadata(context),
       });
       if (!result.isReplay && mirrorDispatcher) {
-        const mirrorPromise = mirrorDispatcher(result.receiptId).catch(
+        // Netlify's DEPLOY_PRIME_URL and URL are build-time variables and are
+        // not guaranteed to exist while a Function is running. The incoming
+        // request URL is the authoritative origin for the active production
+        // deploy or Deploy Preview, so pass it to the Forms mirror explicitly.
+        const mirrorEndpointUrl = new URL("/", request.url).toString();
+        const mirrorPromise = mirrorDispatcher(
+          result.receiptId,
+          mirrorEndpointUrl,
+        ).catch(
           (error) => {
             console.error(
               "[mmq-submission] immediate Forms mirror failed",

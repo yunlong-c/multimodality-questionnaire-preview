@@ -14,6 +14,7 @@ import {
 import {
   buildSubmissionMirrorFormBody,
   mirrorRetryDelayMinutes,
+  submissionMirrorEndpoint,
 } from "../_lib/submission-mirror.mts";
 import type {
   StoreSubmissionInput,
@@ -680,25 +681,64 @@ test("only JSON POST requests are accepted", async () => {
 
 test("immediate Forms mirroring is backgrounded only for new receipts", async () => {
   const repository = new FakeRepository();
-  const dispatched: string[] = [];
+  const dispatched: Array<{
+    receiptId: string;
+    endpointUrl: string;
+  }> = [];
   const waited: Promise<unknown>[] = [];
   const handler = createSubmitHandler(
     () => repository,
-    async (receiptId) => {
-      dispatched.push(receiptId);
+    async (receiptId, endpointUrl) => {
+      dispatched.push({ receiptId, endpointUrl });
     },
   );
   await handler(jsonRequest(requestBody()), {
     waitUntil: (promise) => waited.push(promise),
   });
   await Promise.all(waited);
-  assert.deepEqual(dispatched, [repository.result.receiptId]);
+  assert.deepEqual(dispatched, [{
+    receiptId: repository.result.receiptId,
+    endpointUrl: "https://study.example/",
+  }]);
 
   repository.result.isReplay = true;
   await handler(jsonRequest(requestBody()), {
     waitUntil: (promise) => waited.push(promise),
   });
   assert.equal(dispatched.length, 1);
+});
+
+test("Forms mirroring uses an explicit runtime origin without build variables", () => {
+  const originalDeployPrimeUrl = process.env.DEPLOY_PRIME_URL;
+  const originalUrl = process.env.URL;
+  const originalFormsEndpoint = process.env.MMQ_FORMS_ENDPOINT;
+  delete process.env.DEPLOY_PRIME_URL;
+  delete process.env.URL;
+  delete process.env.MMQ_FORMS_ENDPOINT;
+  try {
+    assert.equal(
+      submissionMirrorEndpoint(
+        "https://deploy-preview-4--sequence-prediction-study.netlify.app",
+      ).toString(),
+      "https://deploy-preview-4--sequence-prediction-study.netlify.app/",
+    );
+  } finally {
+    if (originalDeployPrimeUrl === undefined) {
+      delete process.env.DEPLOY_PRIME_URL;
+    } else {
+      process.env.DEPLOY_PRIME_URL = originalDeployPrimeUrl;
+    }
+    if (originalUrl === undefined) {
+      delete process.env.URL;
+    } else {
+      process.env.URL = originalUrl;
+    }
+    if (originalFormsEndpoint === undefined) {
+      delete process.env.MMQ_FORMS_ENDPOINT;
+    } else {
+      process.env.MMQ_FORMS_ENDPOINT = originalFormsEndpoint;
+    }
+  }
 });
 
 test("trusted metadata comes from Netlify context rather than request fields", () => {
