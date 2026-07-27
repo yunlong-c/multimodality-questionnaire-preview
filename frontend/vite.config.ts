@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 const pagesBase =
   process.env.MMQ_GITHUB_PAGES_BASE?.trim() || "/";
 const frontendRoot = fileURLToPath(new URL(".", import.meta.url));
+const staticPreviewBuild =
+  process.env.VITE_STATIC_PREVIEW === "true";
 
 export function shouldExcludeAdminPage(
   env: NodeJS.ProcessEnv = process.env
@@ -28,6 +30,24 @@ export function createHtmlInputs(
 
 export default defineConfig({
   base: pagesBase,
+  define: {
+    __MMQ_STATIC_PREVIEW__: JSON.stringify(
+      staticPreviewBuild
+    ),
+  },
+  resolve: {
+    alias: staticPreviewBuild
+      ? [
+          {
+            find: /^\.\/serverClient$/,
+            replacement: resolve(
+              frontendRoot,
+              "src/api/staticServerClient.ts"
+            ),
+          },
+        ]
+      : [],
+  },
   publicDir:
     process.env.MMQ_EXTERNAL_ASSETS === "true"
       ? false

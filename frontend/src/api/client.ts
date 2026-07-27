@@ -7,8 +7,11 @@ import type {
   DatasetClassification,
   ExperimentPayload,
 } from "../experiment/experimentTypes";
+import type { BootstrapResponse } from "./types";
 
-const API_BASE = "/api";
+const STATIC_PREVIEW =
+  typeof __MMQ_STATIC_PREVIEW__ !== "undefined" &&
+  __MMQ_STATIC_PREVIEW__;
 export const NETLIFY_FORM_NAME = "mmq-submission-v1";
 const CLIENT_TOKEN_KEY = "multimodality_client_token";
 const STATIC_PARTICIPANT_ID_KEY =
@@ -25,17 +28,7 @@ const submissionTransportState = new Map<
   }
 >();
 
-export interface BootstrapResponse {
-  participant_id: string;
-  client_token: string;
-  format_assignment: StimulusFormat;
-  session_id: string;
-  is_returning: boolean;
-  dataset_classification?: "formal" | "test";
-  formal_collection_allowed?: boolean;
-  stimulus_set_version?: string;
-  catalog_hash?: string;
-}
+export type { BootstrapResponse } from "./types";
 
 export function getSavedClientToken(): string | null {
   try {
@@ -54,7 +47,7 @@ export function saveClientToken(token: string): void {
 }
 
 function isStaticPreview(): boolean {
-  return import.meta.env.VITE_STATIC_PREVIEW === "true";
+  return STATIC_PREVIEW;
 }
 
 function configuredStaticDatasetClassification(): DatasetClassification {
@@ -155,21 +148,11 @@ export async function apiBootstrap(
     };
   }
 
-  const clientToken = getSavedClientToken();
-  const res = await fetch(`${API_BASE}/bootstrap`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      client_token: clientToken,
-      dataset_classification: datasetClassification,
-    }),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Bootstrap failed: ${res.status}`);
-  }
-
-  const data: BootstrapResponse = await res.json();
+  const { bootstrapFromServer } = await import("./serverClient");
+  const data = await bootstrapFromServer(
+    datasetClassification,
+    getSavedClientToken(),
+  );
   saveClientToken(data.client_token);
   return data;
 }
@@ -291,17 +274,6 @@ export async function apiSubmit(
     return;
   }
 
-  const res = await fetch(`${API_BASE}/submit`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      session_id: sessionId,
-      participant_id: participantId,
-      payload,
-    }),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Submit failed: ${res.status}`);
-  }
+  const { submitToServer } = await import("./serverClient");
+  await submitToServer(sessionId, participantId, payload);
 }
