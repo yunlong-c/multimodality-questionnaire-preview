@@ -11,8 +11,13 @@ SHA-256 schedule commitment.
 1. Preserve two encrypted backups of
    `.private/randomization/mmq-randomization-2026-07-v1.json`. Do not regenerate
    this version after formal allocation begins.
-2. Deploy once so Netlify Database provisions Postgres and applies
-   `netlify/database/migrations/0001_create_randomization_ledger.sql`.
+2. Deploy once so the guarded build migration runner applies
+   `netlify/database/schema-migrations/0001_create_randomization_ledger.sql`
+   to the database branch for that deploy. The runner uses a transaction,
+   advisory lock, and recorded SHA-256; a changed applied migration fails the
+   build instead of being silently replayed. Keep
+   `netlify/database/migrations/` empty: mixing this explicit runner with
+   Netlify's native migration directory is a release-blocking error.
 3. Configure `MMQ_RANDOMIZATION_HMAC_SECRET` in the Netlify UI for Functions.
    Use at least 32 random bytes. Do not put it in `netlify.toml` or Git.
 4. Keep `MMQ_FORMAL_COLLECTION_OPEN` absent or set to `false` while preparing
@@ -29,6 +34,10 @@ SHA-256 schedule commitment.
 Until import and activation succeed, `/api/allocate` returns
 `COLLECTION_CLOSED`; the client must not use emergency randomization for this
 intentional state.
+
+The pre-build runner is intentionally limited to the current additive baseline
+schema. Future destructive schema changes must use an out-of-band
+expand/migrate/contract release and must not be added casually to this step.
 
 To start formal collection, set `MMQ_FORMAL_COLLECTION_OPEN=true` in the
 Netlify Functions environment only after the migration, schedule activation,

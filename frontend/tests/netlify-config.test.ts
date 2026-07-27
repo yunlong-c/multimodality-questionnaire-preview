@@ -26,7 +26,7 @@ const requiredPublicRuntimeFiles = [
 test("Netlify builds the static questionnaire from the repository root", () => {
   assert.match(
     netlifyConfig,
-    /command = "npm --workspace multimodality-frontend run build"/
+    /command = "npm run netlify:migrate && npm --workspace multimodality-frontend run build"/
   );
   assert.match(netlifyConfig, /publish = "frontend\/dist"/);
   assert.match(netlifyConfig, /NODE_VERSION = "22"/);

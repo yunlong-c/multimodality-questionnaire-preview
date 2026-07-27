@@ -1,7 +1,7 @@
 # Netlify's production branch is selected while linking the repository.
 # Select `main`; these settings then apply to production and preview builds.
 [build]
-  command = "npm --workspace multimodality-frontend run build"
+  command = "npm run netlify:migrate && npm --workspace multimodality-frontend run build"
   publish = "frontend/dist"
 
 [build.environment]
