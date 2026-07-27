@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc && vite build",
+    "postbuild": "node scripts/assert-static-build.mjs",
     "preview": "vite preview --host 0.0.0.0",
     "test": "tsx --test tests/catalog-runtime.test.ts tests/netlify-config.test.ts tests/participant-copy.test.ts tests/questionnaire-navigation.test.ts tests/video-loading.test.ts"
   },

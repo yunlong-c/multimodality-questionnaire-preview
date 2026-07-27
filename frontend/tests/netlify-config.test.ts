@@ -12,6 +12,9 @@ const netlifyConfig = readFileSync(
   new URL("../../netlify.toml", import.meta.url),
   "utf8"
 );
+const frontendPackage = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8")
+) as { scripts?: Record<string, string> };
 const requiredPublicRuntimeFiles = [
   "frontend/src/data/manifestSelectors.ts",
   "frontend/src/data/manifestTypes.ts",
@@ -31,6 +34,10 @@ test("Netlify builds the static questionnaire from the repository root", () => {
   assert.match(
     netlifyConfig,
     /VITE_DEFAULT_DATASET_CLASSIFICATION = "formal"/
+  );
+  assert.equal(
+    frontendPackage.scripts?.postbuild,
+    "node scripts/assert-static-build.mjs"
   );
 });
 
