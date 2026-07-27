@@ -32,3 +32,6 @@ private/
 !frontend/src/data/officialManifest.ts
 !frontend/src/data/releaseInfo.ts
 !frontend/src/data/sequenceCatalog.generated.ts
+
+# Local Netlify folder
+.netlify
