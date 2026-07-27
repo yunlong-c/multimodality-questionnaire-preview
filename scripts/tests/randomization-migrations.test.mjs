@@ -8,6 +8,7 @@ import {
   canonicalizeMigrationSql,
   loadSchemaMigrations,
   migrationSha256,
+  validateMigrationHistory,
   verifyAppliedMigration,
 } from "../randomization/apply-schema-migrations.mjs";
 
@@ -58,6 +59,36 @@ test("a migration cannot be edited after its hash is recorded", () => {
       migration,
     ),
     /changed after it was applied/,
+  );
+});
+
+test("migration history rejects deleted and retroactive source files", () => {
+  const first = {
+    name: "0001_first",
+    sha256: migrationSha256("SELECT 1;\n"),
+  };
+  const second = {
+    name: "0002_second",
+    sha256: migrationSha256("SELECT 2;\n"),
+  };
+  const appliedSecond = {
+    migration_name: second.name,
+    sha256: second.sha256,
+  };
+
+  assert.throws(
+    () => validateMigrationHistory([appliedSecond], [first]),
+    /missing from source control/,
+  );
+  assert.throws(
+    () => validateMigrationHistory([appliedSecond], [first, second]),
+    /sorts before already-applied migration/,
+  );
+  assert.doesNotThrow(
+    () => validateMigrationHistory(
+      [{ migration_name: first.name, sha256: first.sha256 }],
+      [first, second],
+    ),
   );
 });
 

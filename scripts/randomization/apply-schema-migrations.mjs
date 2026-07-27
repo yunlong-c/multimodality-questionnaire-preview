@@ -97,6 +97,44 @@ export function verifyAppliedMigration(applied, migration) {
   return "skip";
 }
 
+export function validateMigrationHistory(appliedRows, migrations) {
+  const sourceByName = new Map(
+    migrations.map((migration) => [migration.name, migration]),
+  );
+  const appliedByName = new Map(
+    appliedRows.map((migration) => [migration.migration_name, migration]),
+  );
+
+  for (const applied of appliedRows) {
+    const source = sourceByName.get(applied.migration_name);
+    if (!source) {
+      throw new Error(
+        `Applied schema migration '${applied.migration_name}' is missing from source control.`,
+      );
+    }
+    verifyAppliedMigration(applied, source);
+  }
+
+  const highestAppliedName = appliedRows
+    .map((migration) => migration.migration_name)
+    .sort((left, right) => left.localeCompare(right, "en"))
+    .at(-1);
+  if (highestAppliedName) {
+    const retroactive = migrations.find(
+      (migration) =>
+        !appliedByName.has(migration.name)
+        && migration.name.localeCompare(highestAppliedName, "en") < 0,
+    );
+    if (retroactive) {
+      throw new Error(
+        `Schema migration '${retroactive.name}' sorts before already-applied migration '${highestAppliedName}'.`,
+      );
+    }
+  }
+
+  return appliedByName;
+}
+
 function resolveConnectionString() {
   const explicit = process.env.MMQ_MIGRATION_DATABASE_URL?.trim();
   if (process.env.NETLIFY === "true" && explicit) {
@@ -155,17 +193,20 @@ export async function applySchemaMigrations({
         applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    const appliedHistoryResult = await client.query(
+      `SELECT migration_name, sha256
+         FROM mmq_schema_migrations
+        ORDER BY migration_name
+        FOR UPDATE`,
+    );
+    const appliedByName = validateMigrationHistory(
+      appliedHistoryResult.rows,
+      migrations,
+    );
 
     for (const migration of migrations) {
-      const existingResult = await client.query(
-        `SELECT migration_name, sha256
-           FROM mmq_schema_migrations
-          WHERE migration_name = $1
-          FOR UPDATE`,
-        [migration.name],
-      );
       const decision = verifyAppliedMigration(
-        existingResult.rows[0],
+        appliedByName.get(migration.name),
         migration,
       );
       if (decision === "skip") {
