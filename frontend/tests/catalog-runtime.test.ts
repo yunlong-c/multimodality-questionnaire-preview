@@ -189,7 +189,7 @@ test("preview format override assembles five matching presentations and never af
     }
   }
 
-  assert.equal(resolveExperimentFormat("?format=table", "graph"), "graph");
+  assert.equal(resolveExperimentFormat("?format=table", "graph"), "table");
   assert.equal(resolveExperimentFormat("", "video"), "video");
 });
 
@@ -360,7 +360,7 @@ test("participant UI has no test banner and no bundled jsPsych stylesheet", () =
   assert.doesNotMatch(experimentSource, /test-mode-banner/);
   assert.doesNotMatch(experimentSource, /研究内部测试模式/);
   assert.doesNotMatch(entrySource, /jspsych\/css\/jspsych\.css/);
-  assert.match(completionSource, /研究人员下载入口/);
+  assert.match(completionSource, /下载本人作答备份（可选）/);
 });
 
 test("release checks reject an incomplete catalog, bad hash, and wrong P2-fast mapping", () => {

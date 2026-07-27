@@ -20,7 +20,7 @@ export function buildCompletionHtml(
   const title = isSuccess ? "感谢您的参与" : "请重新提交作答";
   const lead = isSuccess
     ? "您的作答已成功提交并保存。感谢您对本研究的支持。"
-    : "我们暂时无法确认您的作答是否已保存。请保持本页面打开，检查网络后重新提交。重新提交不会产生重复记录。";
+    : "我们暂时无法确认您的作答是否已保存。请保持本页面打开，检查网络后重新提交；系统会保留同一会话编号以便核查重试记录。";
   const nextStep = isSuccess
     ? "您现在可以关闭此页面。"
     : "在页面显示“已保存”前，请勿关闭此页面。若多次重试仍失败，可先下载本地备份并联系研究人员。";
@@ -34,8 +34,8 @@ export function buildCompletionHtml(
         </div>
       `;
   const exportHelper = isSuccess
-    ? "以下文件仅用于本地留存或内部核查，不影响您已完成本次作答。"
-    : "如需保留本地备份，可下载以下文件；下载不会替代服务器提交。";
+    ? "如需自行留存，可选择下载本人本次作答的备份文件；这不会影响已完成的提交。"
+    : "建议先下载本人作答备份，再检查网络并重新提交；下载不会替代服务器提交。";
 
   return `
     <main class="shell shell--success" data-completion-status="${status}">
@@ -57,12 +57,12 @@ export function buildCompletionHtml(
         </div>
 
         <details class="export-panel text-left">
-          <summary>研究人员下载入口</summary>
+          <summary>下载本人作答备份（可选）</summary>
           <div class="export-panel__content">
             <p class="helper-text">${exportHelper}</p>
             <div class="download-actions">
-              <button id="download-json" class="button button--secondary" type="button">下载作答记录（JSON）</button>
-              <button id="download-csv" class="button button--secondary" type="button">下载试次记录（CSV）</button>
+              <button id="download-json" class="button button--secondary" type="button">下载完整备份（JSON）</button>
+              <button id="download-csv" class="button button--secondary" type="button">下载试次备份（CSV）</button>
             </div>
           </div>
         </details>

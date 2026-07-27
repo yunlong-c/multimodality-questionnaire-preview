@@ -9,6 +9,28 @@
     <title>序列预测小工具｜时间序列预测研究</title>
   </head>
   <body>
+    <!-- Netlify parses this build-time declaration; the app submits the same
+         named fields with fetch only after the questionnaire is complete. -->
+    <form
+      name="mmq-submission-v1"
+      method="POST"
+      data-netlify="true"
+      hidden
+    >
+      <input type="hidden" name="form-name" value="mmq-submission-v1" />
+      <input type="hidden" name="session_id" />
+      <input type="hidden" name="participant_id" />
+      <input type="hidden" name="format_assignment" />
+      <input type="hidden" name="dataset_classification" />
+      <input type="hidden" name="stimulus_set_version" />
+      <input type="hidden" name="catalog_hash" />
+      <input type="hidden" name="submitted_at" />
+      <input type="hidden" name="payload_sha256" />
+      <input type="hidden" name="submit_attempt_count" />
+      <input type="hidden" name="submit_latency_ms" />
+      <input type="hidden" name="submit_latency_scope" />
+      <textarea name="payload_json"></textarea>
+    </form>
     <div id="app"></div>
     <footer id="regulatory-footer" class="regulatory-footer" hidden></footer>
     <script type="module" src="/src/main.ts"></script>

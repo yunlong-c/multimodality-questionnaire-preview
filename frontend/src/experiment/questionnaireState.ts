@@ -1,4 +1,5 @@
 import type { ResponseType } from "../data/manifestTypes";
+import type { AssetLoadStatus } from "./experimentTypes";
 
 export const SUPPORT_FIELD_NAMES = ["s1", "s2", "s3", "s4", "s5"] as const;
 export const PROBABILITY_FIELD_NAMES = ["p1", "p2", "p3", "p4", "p5"] as const;
@@ -40,6 +41,9 @@ export interface QuestionnaireTrialState {
   revisionCount: number;
   fullscreenOpenCount: number;
   fullscreenDurationMs: number;
+  assetLoadDurationMs: number;
+  assetLoadAttemptCount: number;
+  assetLoadStatus: AssetLoadStatus;
   videoRevealCompleted: boolean;
   videoReplayUsed: boolean;
 }
@@ -72,9 +76,39 @@ export function createQuestionnaireTrialState(): QuestionnaireTrialState {
     revisionCount: 0,
     fullscreenOpenCount: 0,
     fullscreenDurationMs: 0,
+    assetLoadDurationMs: 0,
+    assetLoadAttemptCount: 0,
+    assetLoadStatus: "not_applicable",
     videoRevealCompleted: false,
     videoReplayUsed: false
   };
+}
+
+export function beginAssetLoadAttempt(
+  state: QuestionnaireTrialState,
+  startedAtMs: number
+): number {
+  state.assetLoadAttemptCount += 1;
+  if (state.assetLoadStatus !== "loaded") {
+    state.assetLoadStatus = "pending";
+  }
+  return startedAtMs;
+}
+
+export function finishAssetLoadAttempt(
+  state: QuestionnaireTrialState,
+  startedAtMs: number,
+  finishedAtMs: number,
+  status: "loaded" | "failed"
+): void {
+  const elapsed = finishedAtMs - startedAtMs;
+  if (Number.isFinite(elapsed) && elapsed >= 0) {
+    state.assetLoadDurationMs += elapsed;
+  }
+
+  if (status === "loaded" || state.assetLoadStatus !== "loaded") {
+    state.assetLoadStatus = status;
+  }
 }
 
 export function recordTrialVisit(
