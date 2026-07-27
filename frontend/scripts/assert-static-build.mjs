@@ -16,7 +16,10 @@ const distDirectory = fileURLToPath(
 );
 const textExtensions = new Set([".html", ".js", ".css"]);
 const forbiddenPatterns = [
-  { label: "legacy backend route", pattern: /\/api(?:\/|["'`])/ },
+  {
+    label: "unapproved API route",
+    pattern: /\/api\/(?!allocate(?:\/reconcile)?(?=["'`?#]|$))/,
+  },
   {
     label: "GitHub Raw asset host",
     pattern: /raw\.githubusercontent\.com/i,
@@ -78,5 +81,5 @@ if (failures.length > 0) {
 }
 
 console.log(
-  "Static release gate passed: no backend routes, external assets, private outcomes, or admin page.",
+  "Static release gate passed: only allocation APIs are present; no external assets, private outcomes, or admin page.",
 );

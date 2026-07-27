@@ -4,7 +4,12 @@ import type {
   ExperimentPayload,
   ExperimentTrial
 } from "./experiment/buildExperiment";
-import { apiBootstrap, apiSubmit, type BootstrapResponse } from "./api/client";
+import {
+  allocationMetadataFromBootstrap,
+  apiBootstrap,
+  apiSubmit,
+  type BootstrapResponse
+} from "./api/client";
 import {
   INSTRUCTIONS_COPY,
   LANDING_COPY
@@ -153,7 +158,7 @@ function renderConsentPage(root: HTMLDivElement): void {
   
   startButton?.addEventListener("click", () => {
     startButton.disabled = true;
-    startButton.textContent = "正在连接服务器…";
+    startButton.textContent = "正在准备题目…";
 
     Promise.all([
       apiBootstrap(
@@ -184,6 +189,7 @@ function renderConsentPage(root: HTMLDivElement): void {
           sessionId: bootstrap.session_id,
           datasetClassification: formalCollectionAllowed ? "formal" : "test",
           formalCollectionAllowed,
+          allocationMetadata: allocationMetadataFromBootstrap(bootstrap),
           onComplete: (payload) => {
             const submit = () =>
               apiSubmit(
@@ -201,7 +207,7 @@ function renderConsentPage(root: HTMLDivElement): void {
         console.error("Bootstrap failed:", err);
         startButton.disabled = false;
         startButton.textContent = "开始答题";
-        alert("无法连接到服务器，请确保后端已启动后重试。");
+        alert("当前暂时无法开始答题，请稍后重试。");
       });
   });
 }

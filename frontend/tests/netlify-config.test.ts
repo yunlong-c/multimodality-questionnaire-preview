@@ -41,6 +41,21 @@ test("Netlify builds the static questionnaire from the repository root", () => {
   );
 });
 
+test("Netlify production is formal while unpublished deploys stay test-only", () => {
+  assert.match(
+    netlifyConfig,
+    /\[build\.environment\][\s\S]*VITE_DEFAULT_DATASET_CLASSIFICATION\s*=\s*"formal"/
+  );
+  assert.match(
+    netlifyConfig,
+    /\[context\.deploy-preview\.environment\][\s\S]*?VITE_DEFAULT_DATASET_CLASSIFICATION\s*=\s*"test"/
+  );
+  assert.match(
+    netlifyConfig,
+    /\[context\.branch-deploy\.environment\][\s\S]*?VITE_DEFAULT_DATASET_CLASSIFICATION\s*=\s*"test"/
+  );
+});
+
 test("Netlify serves the frozen assets locally without rewriting them", () => {
   assert.match(netlifyConfig, /MMQ_EXTERNAL_ASSETS = "false"/);
   assert.doesNotMatch(netlifyConfig, /VITE_ASSET_BASE_URL/);

@@ -1,6 +1,7 @@
 import type { StimulusFormat } from "../data/manifestTypes";
+import type { AllocationMetadata } from "../experiment/experimentTypes";
 
-export interface BootstrapResponse {
+export interface BootstrapResponse extends AllocationMetadata {
   participant_id: string;
   client_token: string;
   format_assignment: StimulusFormat;

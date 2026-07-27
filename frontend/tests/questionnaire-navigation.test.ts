@@ -139,11 +139,41 @@ test("final payload always contains five unique final trials and no answer histo
     formatAssignment: "table",
     datasetClassification: "test",
     formalCollectionAllowed: false,
+    allocationMetadata: {
+      allocation_id: null,
+      randomization_version: null,
+      allocation_method: null,
+      allocation_status: null,
+      assigned_at: null,
+      fallback_reason_code: null,
+      fallback_reconciled_at: null
+    },
     startedAt: "2026-07-23T01:00:00.000Z",
     submittedAt: "2026-07-23T01:21:00.000Z"
   });
 
   assert.equal(payload.trials.length, 5);
+  assert.deepEqual(
+    {
+      allocation_id: payload.session.allocation_id,
+      randomization_version: payload.session.randomization_version,
+      allocation_method: payload.session.allocation_method,
+      allocation_status: payload.session.allocation_status,
+      assigned_at: payload.session.assigned_at,
+      fallback_reason_code: payload.session.fallback_reason_code,
+      fallback_reconciled_at:
+        payload.session.fallback_reconciled_at
+    },
+    {
+      allocation_id: null,
+      randomization_version: null,
+      allocation_method: null,
+      allocation_status: null,
+      assigned_at: null,
+      fallback_reason_code: null,
+      fallback_reconciled_at: null
+    }
+  );
   assert.equal(
     new Set(payload.trials.map((trial) => trial.trial_no)).size,
     5

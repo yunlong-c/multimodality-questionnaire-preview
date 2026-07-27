@@ -6,9 +6,25 @@
 - 构建与发布目录由根目录 `netlify.toml` 固定。
 - 普通根链接写入 `formal`；任何含 `preview=1`、`debug=1` 或有效
   `format=table|graph|video` 的链接写入 `test`。
+- Deploy Preview 和 branch deploy 默认写入 `test`，并使用隔离的数据库
+  分支；不得用它们代替生产随机化账本。
 - Netlify 构建内含全部 Graph、Video 和终帧，不应出现
   `raw.githubusercontent.com` 请求。
 - GitHub Pages 的 `gh-pages` 分支与原腾讯云 v2 工程不受此部署影响。
+
+## 正式随机化启用门槛
+
+生产普通入口只有同时满足以下条件才可发放：
+
+1. Netlify Database 迁移已成功应用；
+2. `MMQ_RANDOMIZATION_HMAC_SECRET` 已作为 Netlify 私密环境变量配置，
+   且整个收数期间不得更换；
+3. 私有3000位随机表已验证、导入并激活；
+4. 数据库中的版本与公开 SHA-256 commitment 一致；
+5. 隔离数据库分支的100并发测试已通过。
+
+任一条件未满足时不得把普通根链接发给参与者。随机表缺失、关闭、耗尽或
+版本不匹配会停止进入问卷，不会触发本地应急随机。
 
 ## 团队固定格式测试
 
@@ -53,6 +69,16 @@
 npm run export:netlify -- --input "D:\研究数据\netlify-submissions.csv" --output "D:\研究数据\整理结果"
 ```
 
+随后连接生产数据库并导出受限随机化账本：
+
+```powershell
+npm run randomization:export-ledger
+```
+
+Forms 统计的是已完成提交；随机化账本统计的是已分配/已开始身份。两者不能
+互相替代，应在受限环境中按 `session_id`、`allocation_id` 或
+`participant_id` 核对。
+
 只有在以下检查通过后再发下一批：
 
 - 没有重复出现空白页、Video 加载失败或无法确认提交；
@@ -60,6 +86,8 @@ npm run export:netlify -- --input "D:\研究数据\netlify-submissions.csv" --ou
 - 同一会话五题格式一致；
 - 没有 catalog/hash 不匹配；
 - `submission-conflicts.csv` 中的记录均已人工复核；
+- 应急随机比例不超过已开始人数的1%，且未连续出现3次；超过任一门槛时，
+  当前参与者可完成，但暂停下一批；
 - 没有同一运营商或地区连续两例技术失败。
 
 达到 Netlify 月度额度 70% 时暂停扩量。普通 Netlify 在中国大陆可能慢或

@@ -5,6 +5,7 @@ import {
 } from "../data/officialManifest";
 import type { AssembledTrial, StimulusFormat } from "../data/manifestTypes";
 import type {
+  AllocationMetadata,
   DatasetClassification,
   ExperimentDemographics,
   ExperimentPayload,
@@ -41,6 +42,7 @@ interface AssemblePayloadOptions {
   formatAssignment: StimulusFormat;
   datasetClassification: DatasetClassification;
   formalCollectionAllowed: boolean;
+  allocationMetadata: AllocationMetadata;
   startedAt: string;
   submittedAt: string;
 }
@@ -77,6 +79,7 @@ export function runControlledQuestionnaire({
   sessionId,
   datasetClassification,
   formalCollectionAllowed,
+  allocationMetadata,
   onComplete
 }: StartExperimentOptions): void {
   const sessionStartedAt = new Date().toISOString();
@@ -239,6 +242,7 @@ export function runControlledQuestionnaire({
         formatAssignment,
         datasetClassification: effectiveDatasetClassification,
         formalCollectionAllowed,
+        allocationMetadata,
         startedAt: sessionStartedAt,
         submittedAt
       });
@@ -374,6 +378,7 @@ export function assembleExperimentPayload({
   formatAssignment,
   datasetClassification,
   formalCollectionAllowed,
+  allocationMetadata,
   startedAt,
   submittedAt
 }: AssemblePayloadOptions): ExperimentPayload {
@@ -388,6 +393,7 @@ export function assembleExperimentPayload({
       catalog_hash: catalogHash,
       dataset_classification: datasetClassification,
       formal_collection_allowed: formalCollectionAllowed,
+      ...allocationMetadata,
       started_at: startedAt,
       submitted_at: submittedAt,
       duration_ms:

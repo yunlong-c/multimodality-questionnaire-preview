@@ -11,6 +11,15 @@
   MMQ_EXTERNAL_ASSETS = "false"
   MMQ_EXCLUDE_ADMIN = "true"
 
+# Unpublished deploys are always research-test environments. Netlify Database
+# gives each Deploy Preview its own branch, and the participant UI additionally
+# bypasses formal allocation unless the production context is active.
+[context.deploy-preview.environment]
+  VITE_DEFAULT_DATASET_CLASSIFICATION = "test"
+
+[context.branch-deploy.environment]
+  VITE_DEFAULT_DATASET_CLASSIFICATION = "test"
+
 # Netlify Forms needs the normal post-deploy form scan. Research images remain
 # byte-for-byte static: keep deploy processing enabled for Forms detection, but
 # explicitly disable the legacy asset optimizers and any image recompression.

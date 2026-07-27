@@ -1,0 +1,76 @@
+# Formal randomization operations
+
+The formal allocation schedule is an allocation-concealment artifact. Never
+commit, email unencrypted, or place the private schedule or ledger exports in
+the public repository. `.private/` and export directories are ignored by Git.
+The public repository contains only the randomization version and the one-way
+SHA-256 schedule commitment.
+
+## One-time production setup
+
+1. Preserve two encrypted backups of
+   `.private/randomization/mmq-randomization-2026-07-v1.json`. Do not regenerate
+   this version after formal allocation begins.
+2. Deploy once so Netlify Database provisions Postgres and applies
+   `netlify/database/migrations/0001_create_randomization_ledger.sql`.
+3. Configure `MMQ_RANDOMIZATION_HMAC_SECRET` in the Netlify UI for Functions.
+   Use at least 32 random bytes. Do not put it in `netlify.toml` or Git.
+4. Keep `MMQ_FORMAL_COLLECTION_OPEN` absent or set to `false` while preparing
+   production. Only the exact lowercase value `true` opens the Function gate.
+5. Obtain production database credentials through the Netlify Database CLI and
+   expose them locally as `NETLIFY_DB_URL`.
+6. Import and activate the committed schedule:
+
+   ```text
+   npm run randomization:validate
+   npm run randomization:import -- --activate
+   ```
+
+Until import and activation succeed, `/api/allocate` returns
+`COLLECTION_CLOSED`; the client must not use emergency randomization for this
+intentional state.
+
+To start formal collection, set `MMQ_FORMAL_COLLECTION_OPEN=true` in the
+Netlify Functions environment only after the migration, schedule activation,
+and release checks pass. A missing value, `false`, `TRUE`, or any other value
+returns `423 COLLECTION_CLOSED` without opening a database connection.
+
+To end collection, first set `MMQ_FORMAL_COLLECTION_OPEN=false` and verify that
+both allocation endpoints return `423 COLLECTION_CLOSED`. Only then close the
+database schedule. This external gate keeps an intentional shutdown
+distinguishable from a database outage and prevents the client from treating
+closure as a reason for emergency randomization.
+
+## Batch audit and restricted backup
+
+After each release batch, connect to the production database locally and run:
+
+```text
+npm run randomization:export-ledger
+```
+
+The ignored output directory contains:
+
+- `randomization-summary.json`: assigned format/method totals, remaining
+  scheduled positions, fallback proportion, longest fallback run, and alert;
+- `randomization-assignments.csv`: the restricted assignment ledger, including
+  private block positions and token HMACs;
+- `randomization-sessions.csv`: every issued session, suitable for joining to
+  Netlify Forms on `session_id`, `allocation_id`, or `participant_id`.
+
+This database records **assigned/started identities, not submitted
+questionnaires**. Never report its counts as completed responses. Download the
+Netlify Forms export separately and join locally before calculating completion
+or attrition by format.
+
+Emergency-randomization review is required when its effective proportion
+exceeds 1%, or when three emergency allocations occur consecutively. A current
+participant may finish, but the next distribution batch should pause.
+
+## Development and verification
+
+`npm run test:randomization` checks schedule construction, concealment of the
+public metadata, API/error contracts, fallback reconciliation, ledger
+summaries, and the required transaction/advisory-lock SQL. A real isolated
+Netlify Database branch is still required for the final 100-request concurrency
+test; unit tests do not substitute for that deployment check.

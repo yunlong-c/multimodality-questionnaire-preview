@@ -4,9 +4,14 @@ import {
   stimulusSetVersion,
 } from "../data/releaseInfo";
 import type {
+  AllocationMetadata,
   DatasetClassification,
   ExperimentPayload,
 } from "../experiment/experimentTypes";
+import {
+  allocateFormalParticipant,
+  reconcileFallbackBeforeSubmit,
+} from "./formalAllocation";
 import type { BootstrapResponse } from "./types";
 
 const STATIC_PREVIEW =
@@ -20,15 +25,50 @@ const STATIC_FORMAT_KEY =
   "multimodality_github_preview_format_assignment";
 const STATIC_SUBMISSION_PREFIX =
   "multimodality_github_preview_submission_";
+
+interface FrozenNetlifyPayload {
+  payloadJson: string;
+  payloadSha256: string;
+  payloadSnapshot: ExperimentPayload;
+}
+
+export interface NetlifySubmissionTransportState {
+  attemptCount: number;
+  lastCompletedAttemptLatencyMs: number | null;
+  preparationPromise: Promise<FrozenNetlifyPayload> | null;
+  frozenPayload: FrozenNetlifyPayload | null;
+}
+
 const submissionTransportState = new Map<
   string,
-  {
-    attemptCount: number;
-    lastCompletedAttemptLatencyMs: number | null;
-  }
+  NetlifySubmissionTransportState
 >();
 
 export type { BootstrapResponse } from "./types";
+
+export const EMPTY_ALLOCATION_METADATA: AllocationMetadata = {
+  allocation_id: null,
+  randomization_version: null,
+  allocation_method: null,
+  allocation_status: null,
+  assigned_at: null,
+  fallback_reason_code: null,
+  fallback_reconciled_at: null,
+};
+
+export function allocationMetadataFromBootstrap(
+  bootstrap: BootstrapResponse,
+): AllocationMetadata {
+  return {
+    allocation_id: bootstrap.allocation_id ?? null,
+    randomization_version: bootstrap.randomization_version ?? null,
+    allocation_method: bootstrap.allocation_method ?? null,
+    allocation_status: bootstrap.allocation_status ?? null,
+    assigned_at: bootstrap.assigned_at ?? null,
+    fallback_reason_code: bootstrap.fallback_reason_code ?? null,
+    fallback_reconciled_at: bootstrap.fallback_reconciled_at ?? null,
+  };
+}
 
 export function getSavedClientToken(): string | null {
   try {
@@ -130,11 +170,14 @@ export async function apiBootstrap(
       CLIENT_TOKEN_KEY,
       () => randomIdentifier("preview-client"),
     );
+    saveClientToken(clientToken);
+    if (collectionState.datasetClassification === "formal") {
+      return allocateFormalParticipant(clientToken);
+    }
     const participantId = getOrCreateLocalValue(
       STATIC_PARTICIPANT_ID_KEY,
       () => randomIdentifier("preview-participant"),
     );
-    saveClientToken(clientToken);
     return {
       participant_id: participantId,
       client_token: clientToken,
@@ -145,6 +188,7 @@ export async function apiBootstrap(
       formal_collection_allowed: collectionState.formalCollectionAllowed,
       stimulus_set_version: stimulusSetVersion,
       catalog_hash: catalogHash,
+      ...EMPTY_ALLOCATION_METADATA,
     };
   }
 
@@ -161,6 +205,15 @@ export interface NetlifyFormSubmission {
   payloadJson: string;
   payloadSha256: string;
   body: URLSearchParams;
+}
+
+export function createNetlifySubmissionTransportState(): NetlifySubmissionTransportState {
+  return {
+    attemptCount: 0,
+    lastCompletedAttemptLatencyMs: null,
+    preparationPromise: null,
+    frozenPayload: null,
+  };
 }
 
 export async function sha256Hex(value: string): Promise<string> {
@@ -180,19 +233,77 @@ export async function buildNetlifyFormSubmission(
   submitAttemptCount: number,
   previousAttemptLatencyMs: number | null
 ): Promise<NetlifyFormSubmission> {
+  const frozenPayload = await freezeNetlifyPayload(payload);
+  return buildNetlifyFormSubmissionFromFrozen(
+    frozenPayload,
+    submitAttemptCount,
+    previousAttemptLatencyMs,
+  );
+}
+
+export async function prepareNetlifyFormAttempt(
+  state: NetlifySubmissionTransportState,
+  payload: ExperimentPayload,
+  preSubmitReconciliation: () => Promise<void>,
+): Promise<NetlifyFormSubmission> {
+  if (!state.preparationPromise) {
+    state.preparationPromise = (async () => {
+      await preSubmitReconciliation();
+      return freezeNetlifyPayload(payload);
+    })();
+  }
+
+  const frozenPayload = await state.preparationPromise;
+  state.frozenPayload = frozenPayload;
+  state.attemptCount += 1;
+  return buildNetlifyFormSubmissionFromFrozen(
+    frozenPayload,
+    state.attemptCount,
+    state.lastCompletedAttemptLatencyMs,
+  );
+}
+
+async function freezeNetlifyPayload(
+  payload: ExperimentPayload,
+): Promise<FrozenNetlifyPayload> {
   const payloadJson = JSON.stringify(payload);
   const payloadSha256 = await sha256Hex(payloadJson);
+  return {
+    payloadJson,
+    payloadSha256,
+    payloadSnapshot: JSON.parse(payloadJson) as ExperimentPayload,
+  };
+}
+
+function buildNetlifyFormSubmissionFromFrozen(
+  frozenPayload: FrozenNetlifyPayload,
+  submitAttemptCount: number,
+  previousAttemptLatencyMs: number | null,
+): NetlifyFormSubmission {
+  const {
+    payloadJson,
+    payloadSha256,
+    payloadSnapshot,
+  } = frozenPayload;
+  const session = payloadSnapshot.session;
   const body = new URLSearchParams({
     "form-name": NETLIFY_FORM_NAME,
-    session_id: payload.session.session_id,
-    participant_id: payload.session.participant_id,
-    format_assignment: payload.session.format_assignment,
-    dataset_classification: payload.session.dataset_classification,
-    stimulus_set_version: payload.session.stimulus_set_version,
-    catalog_hash: payload.session.catalog_hash,
-    submitted_at: payload.session.submitted_at,
+    session_id: session.session_id,
+    participant_id: session.participant_id,
+    format_assignment: session.format_assignment,
+    dataset_classification: session.dataset_classification,
+    stimulus_set_version: session.stimulus_set_version,
+    catalog_hash: session.catalog_hash,
+    submitted_at: session.submitted_at,
     payload_sha256: payloadSha256,
     payload_json: payloadJson,
+    allocation_id: session.allocation_id ?? "",
+    randomization_version: session.randomization_version ?? "",
+    allocation_method: session.allocation_method ?? "",
+    allocation_status: session.allocation_status ?? "",
+    assigned_at: session.assigned_at ?? "",
+    fallback_reason_code: session.fallback_reason_code ?? "",
+    fallback_reconciled_at: session.fallback_reconciled_at ?? "",
     submit_attempt_count: String(submitAttemptCount),
     submit_latency_ms:
       previousAttemptLatencyMs === null
@@ -247,16 +358,19 @@ export async function apiSubmit(
 ): Promise<void> {
   if (isStaticPreview()) {
     if (isNetlifyFormsMode()) {
-      const state = submissionTransportState.get(sessionId) ?? {
-        attemptCount: 0,
-        lastCompletedAttemptLatencyMs: null,
-      };
-      state.attemptCount += 1;
+      const state =
+        submissionTransportState.get(sessionId) ??
+        createNetlifySubmissionTransportState();
       submissionTransportState.set(sessionId, state);
-      const submission = await buildNetlifyFormSubmission(
+      const submission = await prepareNetlifyFormAttempt(
+        state,
         payload,
-        state.attemptCount,
-        state.lastCompletedAttemptLatencyMs,
+        async () => {
+          const clientToken = getSavedClientToken();
+          if (clientToken) {
+            await reconcileFallbackBeforeSubmit(payload, clientToken);
+          }
+        },
       );
       const startedAt = performance.now();
       try {
@@ -266,7 +380,11 @@ export async function apiSubmit(
           Math.max(0, performance.now() - startedAt),
         );
       }
-      saveStaticSubmission(sessionId, participantId, payload);
+      saveStaticSubmission(
+        sessionId,
+        participantId,
+        state.frozenPayload?.payloadSnapshot ?? payload,
+      );
       return;
     }
 

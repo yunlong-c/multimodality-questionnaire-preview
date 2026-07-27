@@ -33,9 +33,18 @@ import {
 import {
   NETLIFY_FORM_NAME,
   buildNetlifyFormSubmission,
+  createNetlifySubmissionTransportState,
   postNetlifyForm,
+  prepareNetlifyFormAttempt,
   resolveStaticCollectionState
 } from "../src/api/client";
+import {
+  FORMAL_ASSIGNMENT_STORAGE_KEY,
+  RANDOMIZATION_VERSION,
+  allocateFormalParticipant,
+  randomFormatWithWebCrypto,
+  reconcileFallbackBeforeSubmit
+} from "../src/api/formalAllocation";
 import type { ExperimentPayload } from "../src/experiment/experimentTypes";
 
 const mainSource = readFileSync(path.resolve("src/main.ts"), "utf8");
@@ -58,6 +67,13 @@ const netlifyTestPayload: ExperimentPayload = {
     catalog_hash: catalogHash,
     dataset_classification: "formal",
     formal_collection_allowed: true,
+    allocation_id: "allocation-form-test",
+    randomization_version: "mmq-randomization-2026-07-v1",
+    allocation_method: "variable_block",
+    allocation_status: "confirmed",
+    assigned_at: "2026-07-27T00:59:59.000Z",
+    fallback_reason_code: null,
+    fallback_reconciled_at: null,
     started_at: "2026-07-27T01:00:00.000Z",
     submitted_at: "2026-07-27T01:05:00.000Z",
     duration_ms: 300000
@@ -90,6 +106,46 @@ const stylesSource = readFileSync(
   path.resolve("src/styles/main.css"),
   "utf8"
 );
+
+function createMemoryStorage(): Pick<
+  Storage,
+  "getItem" | "setItem" | "removeItem"
+> {
+  const values = new Map<string, string>();
+  return {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => {
+      values.set(key, value);
+    },
+    removeItem: (key) => {
+      values.delete(key);
+    }
+  };
+}
+
+function successfulAllocationResponse(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    participant_id: "participant-allocation-test",
+    client_token: "client-allocation-test-0001",
+    format_assignment: "graph",
+    session_id: "session-allocation-test-0001",
+    is_returning: false,
+    dataset_classification: "formal",
+    formal_collection_allowed: true,
+    stimulus_set_version: stimulusSetVersion,
+    catalog_hash: catalogHash,
+    allocation_id: "allocation-variable-test-0001",
+    randomization_version: RANDOMIZATION_VERSION,
+    allocation_method: "variable_block",
+    allocation_status: "confirmed",
+    assigned_at: "2026-07-27T01:00:00.000Z",
+    fallback_reason_code: null,
+    fallback_reconciled_at: null,
+    ...overrides
+  };
+}
 
 function collectCopyText(value: unknown): string[] {
   if (typeof value === "string") {
@@ -397,6 +453,357 @@ test("static collection defaults to formal only when configured and test links a
   });
 });
 
+test("formal allocation retries two transient failures and then persists a Web Crypto fallback", async () => {
+  const storage = createMemoryStorage();
+  let requestCount = 0;
+  const attemptedSessionIds: string[] = [];
+  const unavailableFetch: typeof fetch = async (_input, init) => {
+    requestCount += 1;
+    const request = JSON.parse(String(init?.body)) as {
+      session_id?: string;
+    };
+    attemptedSessionIds.push(request.session_id ?? "");
+    return Response.json(
+      {
+        error: {
+          code: "ALLOCATION_UNAVAILABLE",
+          message: "temporarily unavailable"
+        }
+      },
+      { status: 503 }
+    );
+  };
+
+  const result = await allocateFormalParticipant(
+    "client-allocation-test-0001",
+    {
+      fetchImplementation: unavailableFetch,
+      storage,
+      retryDelaysMs: [0, 0]
+    }
+  );
+
+  assert.equal(requestCount, 3);
+  assert.equal(new Set(attemptedSessionIds).size, 1);
+  assert.notEqual(attemptedSessionIds[0], result.session_id);
+  assert.ok(
+    attemptedSessionIds.every(
+      (attemptSessionId) => attemptSessionId !== result.session_id
+    )
+  );
+  assert.equal(result.dataset_classification, "formal");
+  assert.equal(result.formal_collection_allowed, true);
+  assert.equal(result.allocation_method, "client_fallback");
+  assert.equal(result.allocation_status, "unreconciled");
+  assert.equal(
+    result.fallback_reason_code,
+    "allocation_server_error"
+  );
+  assert.ok(["table", "graph", "video"].includes(result.format_assignment));
+  assert.ok(storage.getItem(FORMAL_ASSIGNMENT_STORAGE_KEY));
+
+  const firstAllocationId = result.allocation_id;
+  const firstFormat = result.format_assignment;
+  const returning = await allocateFormalParticipant(
+    "client-allocation-test-0001",
+    {
+      fetchImplementation: async () => {
+        throw new TypeError("network unavailable");
+      },
+      storage,
+      retryDelaysMs: [0, 0]
+    }
+  );
+  assert.equal(returning.allocation_id, firstAllocationId);
+  assert.equal(returning.format_assignment, firstFormat);
+  assert.equal(returning.participant_id, result.participant_id);
+  assert.equal(returning.is_returning, true);
+  assert.notEqual(returning.session_id, result.session_id);
+});
+
+test("formal allocation never falls back for catalog, capacity, collection, or other 4xx rejection", async () => {
+  for (const [status, code] of [
+    [400, "INVALID_REQUEST"],
+    [409, "CATALOG_MISMATCH"],
+    [409, "SCHEDULE_MISMATCH"],
+    [409, "SCHEDULE_EXHAUSTED"],
+    [423, "COLLECTION_CLOSED"]
+  ] as const) {
+    const storage = createMemoryStorage();
+    let requestCount = 0;
+    await assert.rejects(
+      allocateFormalParticipant("client-allocation-test-0001", {
+        fetchImplementation: async () => {
+          requestCount += 1;
+          return Response.json(
+            { error: { code, message: code } },
+            { status }
+          );
+        },
+        storage,
+        retryDelaysMs: [0, 0]
+      }),
+      (error: unknown) =>
+        error instanceof Error &&
+        "code" in error &&
+        error.code === code
+    );
+    assert.equal(requestCount, 1);
+    assert.equal(
+      storage.getItem(FORMAL_ASSIGNMENT_STORAGE_KEY),
+      null
+    );
+  }
+});
+
+test("formal allocation classifies an aborted request as a timeout fallback", async () => {
+  const result = await allocateFormalParticipant(
+    "client-allocation-test-0001",
+    {
+      fetchImplementation: async (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () =>
+              reject(
+                new DOMException("request aborted", "AbortError")
+              ),
+            { once: true }
+          );
+        }),
+      storage: createMemoryStorage(),
+      attemptTimeoutMs: 2,
+      retryDelaysMs: [0, 0]
+    }
+  );
+
+  assert.equal(result.allocation_method, "client_fallback");
+  assert.equal(result.fallback_reason_code, "allocation_timeout");
+});
+
+test("formal allocation classifies a fetch rejection as a network fallback", async () => {
+  const result = await allocateFormalParticipant(
+    "client-allocation-test-0001",
+    {
+      fetchImplementation: async () => {
+        throw new TypeError("network unavailable");
+      },
+      storage: createMemoryStorage(),
+      retryDelaysMs: [0, 0]
+    }
+  );
+
+  assert.equal(result.allocation_method, "client_fallback");
+  assert.equal(
+    result.fallback_reason_code,
+    "allocation_network_error"
+  );
+});
+
+test("server allocation is persisted and cannot silently change on a later visit", async () => {
+  const storage = createMemoryStorage();
+  const clientToken = "client-allocation-test-0001";
+  const first = await allocateFormalParticipant(clientToken, {
+    fetchImplementation: async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as {
+        session_id: string;
+      };
+      return Response.json(
+        successfulAllocationResponse({
+          session_id: request.session_id
+        })
+      );
+    },
+    storage,
+    retryDelaysMs: [0, 0]
+  });
+  assert.equal(first.allocation_method, "variable_block");
+
+  await assert.rejects(
+    allocateFormalParticipant(clientToken, {
+      fetchImplementation: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as {
+          session_id: string;
+        };
+        return Response.json(
+          successfulAllocationResponse({
+            format_assignment: "video",
+            session_id: request.session_id
+          })
+        );
+      },
+      storage,
+      retryDelaysMs: [0, 0]
+    }),
+    /change an existing formal assignment/
+  );
+});
+
+test("Web Crypto selection maps an unbiased uint32 draw to the three formats", () => {
+  for (const [draw, expected] of [
+    [0, "table"],
+    [1, "graph"],
+    [2, "video"]
+  ] as const) {
+    assert.equal(
+      randomFormatWithWebCrypto({
+        getRandomValues: (values) => {
+          (values as Uint32Array)[0] = draw;
+          return values;
+        }
+      }),
+      expected
+    );
+  }
+
+  const draws = [0xffffffff, 2];
+  assert.equal(
+    randomFormatWithWebCrypto({
+      getRandomValues: (values) => {
+        (values as Uint32Array)[0] = draws.shift() ?? 0;
+        return values;
+      }
+    }),
+    "video"
+  );
+});
+
+test("fallback reconciliation upgrades audit metadata but never blocks the Forms payload", async () => {
+  const payload = structuredClone(netlifyTestPayload);
+  payload.session = {
+    ...payload.session,
+    participant_id: "fallback-participant-test-0001",
+    session_id: "fallback-session-test-0001",
+    format_assignment: "video",
+    allocation_id: "fallback-allocation-test-0001",
+    randomization_version: RANDOMIZATION_VERSION,
+    allocation_method: "client_fallback",
+    allocation_status: "unreconciled",
+    assigned_at: "2026-07-27T00:59:00.000Z",
+    fallback_reason_code: "allocation_network_error",
+    fallback_reconciled_at: null
+  };
+
+  await reconcileFallbackBeforeSubmit(
+    payload,
+    "client-allocation-test-0001",
+    {
+      fetchImplementation: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as Record<
+          string,
+          unknown
+        >;
+        return Response.json(
+          successfulAllocationResponse({
+            participant_id: request.participant_id,
+            session_id: request.session_id,
+            format_assignment: request.format_assignment,
+            allocation_id: request.allocation_id,
+            allocation_method: "client_fallback",
+            assigned_at: request.assigned_at,
+            fallback_reason_code: request.fallback_reason_code,
+            fallback_reconciled_at: "2026-07-27T01:05:01.000Z"
+          })
+        );
+      },
+      storage: createMemoryStorage()
+    }
+  );
+
+  assert.equal(payload.session.allocation_status, "confirmed");
+  assert.equal(
+    payload.session.fallback_reconciled_at,
+    "2026-07-27T01:05:01.000Z"
+  );
+  assert.equal(payload.session.format_assignment, "video");
+
+  payload.session.allocation_status = "unreconciled";
+  payload.session.fallback_reconciled_at = null;
+  await assert.doesNotReject(
+    reconcileFallbackBeforeSubmit(
+      payload,
+      "client-allocation-test-0001",
+      {
+        fetchImplementation: async () =>
+          Response.json(
+            {
+              error: {
+                code: "ALLOCATION_UNAVAILABLE",
+                message: "still unavailable"
+              }
+            },
+            { status: 503 }
+          ),
+        storage: createMemoryStorage()
+      }
+    )
+  );
+  assert.equal(payload.session.allocation_status, "unreconciled");
+  assert.equal(payload.session.fallback_reconciled_at, null);
+});
+
+test("Forms retries reconcile once and resend one frozen payload hash", async () => {
+  const payload = structuredClone(netlifyTestPayload);
+  payload.session = {
+    ...payload.session,
+    allocation_id: "fallback-allocation-freeze-0001",
+    allocation_method: "client_fallback",
+    allocation_status: "unreconciled",
+    fallback_reason_code: "allocation_server_error",
+    fallback_reconciled_at: null
+  };
+  const state = createNetlifySubmissionTransportState();
+  let reconciliationCount = 0;
+  const reconcileOnce = async (): Promise<void> => {
+    reconciliationCount += 1;
+    payload.session.allocation_status = "confirmed";
+    payload.session.fallback_reconciled_at =
+      "2026-07-27T01:05:01.000Z";
+  };
+
+  const firstAttempt = await prepareNetlifyFormAttempt(
+    state,
+    payload,
+    reconcileOnce
+  );
+  state.lastCompletedAttemptLatencyMs = 731;
+
+  // A later in-memory change must not alter the audit record or hash sent by
+  // the retry. Only the transport diagnostics may change.
+  payload.session.allocation_status = "unreconciled";
+  payload.session.fallback_reconciled_at = null;
+  payload.session.duration_ms = 999999;
+  const retryAttempt = await prepareNetlifyFormAttempt(
+    state,
+    payload,
+    reconcileOnce
+  );
+
+  assert.equal(reconciliationCount, 1);
+  assert.equal(firstAttempt.payloadJson, retryAttempt.payloadJson);
+  assert.equal(firstAttempt.payloadSha256, retryAttempt.payloadSha256);
+  assert.equal(
+    firstAttempt.body.get("payload_sha256"),
+    retryAttempt.body.get("payload_sha256")
+  );
+  assert.equal(
+    firstAttempt.body.get("allocation_status"),
+    "confirmed"
+  );
+  assert.equal(
+    retryAttempt.body.get("allocation_status"),
+    "confirmed"
+  );
+  assert.equal(
+    retryAttempt.body.get("fallback_reconciled_at"),
+    "2026-07-27T01:05:01.000Z"
+  );
+  assert.equal(firstAttempt.body.get("submit_attempt_count"), "1");
+  assert.equal(retryAttempt.body.get("submit_attempt_count"), "2");
+  assert.equal(firstAttempt.body.get("submit_latency_ms"), "");
+  assert.equal(retryAttempt.body.get("submit_latency_ms"), "731");
+});
+
 test("Netlify form declaration and encoded submission contain the audited payload and SHA-256", async () => {
   assert.match(indexSource, /name="mmq-submission-v1"/);
   assert.match(indexSource, /data-netlify="true"/);
@@ -409,6 +816,13 @@ test("Netlify form declaration and encoded submission contain the audited payloa
     "catalog_hash",
     "submitted_at",
     "payload_sha256",
+    "allocation_id",
+    "randomization_version",
+    "allocation_method",
+    "allocation_status",
+    "assigned_at",
+    "fallback_reason_code",
+    "fallback_reconciled_at",
     "payload_json",
     "submit_attempt_count",
     "submit_latency_ms"
@@ -431,6 +845,25 @@ test("Netlify form declaration and encoded submission contain the audited payloa
   assert.equal(submission.body.get("form-name"), NETLIFY_FORM_NAME);
   assert.equal(submission.body.get("payload_json"), expectedJson);
   assert.equal(submission.body.get("payload_sha256"), expectedHash);
+  assert.equal(
+    submission.body.get("allocation_id"),
+    "allocation-form-test"
+  );
+  assert.equal(
+    submission.body.get("randomization_version"),
+    "mmq-randomization-2026-07-v1"
+  );
+  assert.equal(
+    submission.body.get("allocation_method"),
+    "variable_block"
+  );
+  assert.equal(submission.body.get("allocation_status"), "confirmed");
+  assert.equal(
+    submission.body.get("assigned_at"),
+    "2026-07-27T00:59:59.000Z"
+  );
+  assert.equal(submission.body.get("fallback_reason_code"), "");
+  assert.equal(submission.body.get("fallback_reconciled_at"), "");
   assert.equal(submission.body.get("submit_attempt_count"), "2");
   assert.equal(submission.body.get("submit_latency_ms"), "431");
   assert.equal(
