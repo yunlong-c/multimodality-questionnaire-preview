@@ -9,10 +9,13 @@ import type { AssembledTrial } from "../data/manifestTypes";
 import {
   PROBABILITY_FIELD_NAMES,
   SUPPORT_FIELD_NAMES,
+  beginAssetLoadAttempt,
+  finishAssetLoadAttempt,
   type QuestionnaireTrialState
 } from "./questionnaireState";
 import { renderSeriesTable } from "./seriesTableRenderer";
 import {
+  VIDEO_ASSET_LOAD_TIMEOUT_MS,
   appendPlaybackFragment,
   beginPlaybackAfterLoad,
   preloadImageAsset,
@@ -252,6 +255,43 @@ export function attachStimulusInteractions(
   const fullscreenController = attachFullscreenInteraction();
   const cleanupCallbacks: Array<() => void> = [fullscreenController.cleanup];
 
+  if (stimulus.format === "graph") {
+    const image =
+      document.querySelector<HTMLImageElement>("[data-graph-image]");
+    if (image) {
+      const startedAt = beginAssetLoadAttempt(state, performance.now());
+      let settled = false;
+
+      const finish = (status: "loaded" | "failed"): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        finishAssetLoadAttempt(
+          state,
+          startedAt,
+          performance.now(),
+          status
+        );
+      };
+      const handleLoad = (): void => finish("loaded");
+      const handleError = (): void => finish("failed");
+
+      image.addEventListener("load", handleLoad, { once: true });
+      image.addEventListener("error", handleError, { once: true });
+      if (image.complete) {
+        queueMicrotask(() => {
+          finish(image.naturalWidth > 0 ? "loaded" : "failed");
+        });
+      }
+
+      cleanupCallbacks.push(() => {
+        image.removeEventListener("load", handleLoad);
+        image.removeEventListener("error", handleError);
+      });
+    }
+  }
+
   if (stimulus.format === "video") {
     const container = document.querySelector<HTMLElement>(
       "[data-video-stimulus]"
@@ -359,7 +399,20 @@ export function attachStimulusInteractions(
       const beginPlayback = async (
         mode: "initial" | "replay"
       ): Promise<void> => {
+        const assetLoadStartedAt =
+          mode === "initial"
+            ? beginAssetLoadAttempt(state, performance.now())
+            : null;
+
         if (!gifUrl) {
+          if (assetLoadStartedAt !== null) {
+            finishAssetLoadAttempt(
+              state,
+              assetLoadStartedAt,
+              performance.now(),
+              "failed"
+            );
+          }
           showLoadFailure(mode);
           return;
         }
@@ -408,14 +461,20 @@ export function attachStimulusInteractions(
             `${Date.now()}-${playbackAttempt}`
           );
           await beginPlaybackAfterLoad({
-            preload: () => preloadImageAsset(gifUrl, signal),
+            preload: () =>
+              preloadImageAsset(
+                gifUrl,
+                signal,
+                VIDEO_ASSET_LOAD_TIMEOUT_MS
+              ),
             present: async () => {
               if (signal.aborted || !image.isConnected) {
                 return;
               }
               await waitForImageLoad(image, playbackUrl, {
                 signal,
-                clearOnAbort: true
+                clearOnAbort: true,
+                timeoutMs: VIDEO_ASSET_LOAD_TIMEOUT_MS
               });
             },
             onReady: () => {
@@ -423,6 +482,14 @@ export function attachStimulusInteractions(
                 return;
               }
 
+              if (assetLoadStartedAt !== null) {
+                finishAssetLoadAttempt(
+                  state,
+                  assetLoadStartedAt,
+                  performance.now(),
+                  "loaded"
+                );
+              }
               image.hidden = false;
               image.setAttribute("aria-busy", "false");
               if (loadingPanel) {
@@ -447,6 +514,14 @@ export function attachStimulusInteractions(
             (error instanceof Error && error.name === "AbortError")
           ) {
             return;
+          }
+          if (assetLoadStartedAt !== null) {
+            finishAssetLoadAttempt(
+              state,
+              assetLoadStartedAt,
+              performance.now(),
+              "failed"
+            );
           }
           showLoadFailure(mode);
         }
@@ -672,6 +747,7 @@ function renderStimulus(stimulus: AssembledTrial): string {
             aria-label="全屏查看前 20 期历史数据折线图"
             data-fullscreen-media
             data-fullscreen-label="历史数据折线图"
+            data-graph-image
           />
         </div>
         <p class="media-hint">点击图像可全屏查看</p>

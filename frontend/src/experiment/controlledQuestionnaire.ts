@@ -476,6 +476,12 @@ function buildFinalTrialRow({
       stimulus.format === "table" ? null : state.fullscreenOpenCount,
     fullscreen_duration_ms:
       stimulus.format === "table" ? null : Math.round(state.fullscreenDurationMs),
+    asset_load_duration_ms:
+      stimulus.format === "table" ? null : Math.round(state.assetLoadDurationMs),
+    asset_load_attempt_count:
+      stimulus.format === "table" ? 0 : state.assetLoadAttemptCount,
+    asset_load_status:
+      stimulus.format === "table" ? "not_applicable" : state.assetLoadStatus,
     s1: answer.s1,
     s2: answer.s2,
     s3: answer.s3,

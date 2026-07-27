@@ -10,9 +10,11 @@ import type { ExperimentDemographics } from "../src/experiment/experimentTypes";
 import {
   addFullscreenInteraction,
   addTrialVisibleDuration,
+  beginAssetLoadAttempt,
   buildFinalTrialAnswer,
   commitTrialAnswer,
   createQuestionnaireTrialState,
+  finishAssetLoadAttempt,
   recordTrialVisit
 } from "../src/experiment/questionnaireState";
 
@@ -82,6 +84,19 @@ test("revision count changes only after a previously submitted answer changes", 
   );
 });
 
+test("asset loading records attempts, cumulative duration, and eventual success without identifiers", () => {
+  const state = createQuestionnaireTrialState();
+
+  const firstStartedAt = beginAssetLoadAttempt(state, 100);
+  finishAssetLoadAttempt(state, firstStartedAt, 260, "failed");
+  const secondStartedAt = beginAssetLoadAttempt(state, 300);
+  finishAssetLoadAttempt(state, secondStartedAt, 410, "loaded");
+
+  assert.equal(state.assetLoadAttemptCount, 2);
+  assert.equal(state.assetLoadDurationMs, 270);
+  assert.equal(state.assetLoadStatus, "loaded");
+});
+
 test("final payload always contains five unique final trials and no answer history", () => {
   const stimuli = buildExperimentTrials("table");
   const trialStates = stimuli.map((stimulus, index) => {
@@ -140,6 +155,14 @@ test("final payload always contains five unique final trials and no answer histo
   assert.deepEqual(
     payload.trials.map((trial) => trial.visit_count),
     [1, 1, 1, 1, 1]
+  );
+  assert.ok(
+    payload.trials.every(
+      (trial) =>
+        trial.asset_load_duration_ms === null &&
+        trial.asset_load_attempt_count === 0 &&
+        trial.asset_load_status === "not_applicable"
+    )
   );
   assert.ok(
     payload.trials.every(

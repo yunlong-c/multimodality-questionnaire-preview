@@ -4,6 +4,7 @@ import test from "node:test";
 import { buildExperimentTrials } from "../src/data/officialManifest";
 import { buildTrialHtml } from "../src/experiment/trialRendering";
 import {
+  VIDEO_ASSET_LOAD_TIMEOUT_MS,
   appendPlaybackFragment,
   beginPlaybackAfterLoad,
   waitForImageLoad
@@ -128,6 +129,29 @@ test("aborting video loading removes the pending image source", async () => {
   );
   assert.equal(image.cleared, true);
   assert.equal(image.src, "");
+});
+
+test("stalled video loading times out and exposes a retryable failure", async () => {
+  const image = new FakeImage();
+  const loading = waitForImageLoad(
+    asHtmlImage(image),
+    "https://assets.example/video.gif",
+    {
+      clearOnAbort: true,
+      timeoutMs: 5
+    }
+  );
+
+  await assert.rejects(
+    loading,
+    (error: unknown) =>
+      error instanceof Error &&
+      error.name === "TimeoutError" &&
+      /timed out after 5 ms/.test(error.message)
+  );
+  assert.equal(image.cleared, true);
+  assert.equal(image.src, "");
+  assert.equal(VIDEO_ASSET_LOAD_TIMEOUT_MS, 90_000);
 });
 
 test("playback restarts with a fragment without changing the network URL", () => {

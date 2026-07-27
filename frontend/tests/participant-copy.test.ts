@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import path from "node:path";
@@ -29,6 +30,13 @@ import {
   getRequestedPreviewFormatOverride,
   resolveExperimentFormat
 } from "../src/config/runtimeMode";
+import {
+  NETLIFY_FORM_NAME,
+  buildNetlifyFormSubmission,
+  postNetlifyForm,
+  resolveStaticCollectionState
+} from "../src/api/client";
+import type { ExperimentPayload } from "../src/experiment/experimentTypes";
 
 const mainSource = readFileSync(path.resolve("src/main.ts"), "utf8");
 const experimentSource = readFileSync(
@@ -39,6 +47,33 @@ const trialRenderingSource = readFileSync(
   path.resolve("src/experiment/trialRendering.ts"),
   "utf8"
 );
+const indexSource = readFileSync(path.resolve("index.html"), "utf8");
+
+const netlifyTestPayload: ExperimentPayload = {
+  session: {
+    session_id: "session-form-test",
+    participant_id: "participant-form-test",
+    format_assignment: "graph",
+    stimulus_set_version: stimulusSetVersion,
+    catalog_hash: catalogHash,
+    dataset_classification: "formal",
+    formal_collection_allowed: true,
+    started_at: "2026-07-27T01:00:00.000Z",
+    submitted_at: "2026-07-27T01:05:00.000Z",
+    duration_ms: 300000
+  },
+  trials: [],
+  demographics: {
+    gender: null,
+    age: null,
+    education: null,
+    experience: null,
+    stat_course: null,
+    started_at: null,
+    submitted_at: null,
+    duration_ms: null
+  }
+};
 const controlledQuestionnaireSource = readFileSync(
   path.resolve("src/experiment/controlledQuestionnaire.ts"),
   "utf8"
@@ -347,9 +382,98 @@ test("submission resolution distinguishes confirmed success from unconfirmed sub
   );
 });
 
-test("preview and debug URLs request test data without changing participant copy", () => {
+test("static collection defaults to formal only when configured and test links always stay test", () => {
+  assert.deepEqual(resolveStaticCollectionState(undefined, "formal"), {
+    datasetClassification: "formal",
+    formalCollectionAllowed: true
+  });
+  assert.deepEqual(resolveStaticCollectionState("test", "formal"), {
+    datasetClassification: "test",
+    formalCollectionAllowed: false
+  });
+  assert.deepEqual(resolveStaticCollectionState(undefined, "test"), {
+    datasetClassification: "test",
+    formalCollectionAllowed: false
+  });
+});
+
+test("Netlify form declaration and encoded submission contain the audited payload and SHA-256", async () => {
+  assert.match(indexSource, /name="mmq-submission-v1"/);
+  assert.match(indexSource, /data-netlify="true"/);
+  for (const field of [
+    "session_id",
+    "participant_id",
+    "format_assignment",
+    "dataset_classification",
+    "stimulus_set_version",
+    "catalog_hash",
+    "submitted_at",
+    "payload_sha256",
+    "payload_json",
+    "submit_attempt_count",
+    "submit_latency_ms"
+  ]) {
+    assert.match(indexSource, new RegExp(`name="${field}"`));
+  }
+
+  const submission = await buildNetlifyFormSubmission(
+    netlifyTestPayload,
+    2,
+    431
+  );
+  const expectedJson = JSON.stringify(netlifyTestPayload);
+  const expectedHash = createHash("sha256")
+    .update(expectedJson, "utf8")
+    .digest("hex");
+
+  assert.equal(submission.payloadJson, expectedJson);
+  assert.equal(submission.payloadSha256, expectedHash);
+  assert.equal(submission.body.get("form-name"), NETLIFY_FORM_NAME);
+  assert.equal(submission.body.get("payload_json"), expectedJson);
+  assert.equal(submission.body.get("payload_sha256"), expectedHash);
+  assert.equal(submission.body.get("submit_attempt_count"), "2");
+  assert.equal(submission.body.get("submit_latency_ms"), "431");
+  assert.equal(
+    submission.body.get("submit_latency_scope"),
+    "previous_completed_attempt"
+  );
+  assert.equal(submission.body.has("ip"), false);
+  assert.equal(submission.body.has("location"), false);
+  assert.equal(submission.body.has("device_fingerprint"), false);
+});
+
+test("Netlify Forms accepts only a 2xx response as confirmed success", async () => {
+  const submission = await buildNetlifyFormSubmission(
+    netlifyTestPayload,
+    1,
+    null
+  );
+  let observedBody = "";
+  const successfulFetch: typeof fetch = async (_input, init) => {
+    observedBody = String(init?.body ?? "");
+    return new Response(null, { status: 204 });
+  };
+  await postNetlifyForm(submission, successfulFetch);
+  assert.equal(
+    new URLSearchParams(observedBody).get("payload_sha256"),
+    submission.payloadSha256
+  );
+
+  const failedFetch: typeof fetch = async () =>
+    new Response(null, { status: 503 });
+  await assert.rejects(
+    postNetlifyForm(submission, failedFetch),
+    /Netlify Forms submit failed: 503/
+  );
+});
+
+test("preview, debug, and fixed-format URLs request test data without changing participant copy", () => {
   assert.equal(getRequestedDatasetClassification("?preview=1"), "test");
   assert.equal(getRequestedDatasetClassification("?debug=1"), "test");
+  assert.equal(
+    getRequestedDatasetClassification("?format=table"),
+    "test"
+  );
   assert.equal(
     getRequestedDatasetClassification("?preview=0"),
     undefined
@@ -358,7 +482,7 @@ test("preview and debug URLs request test data without changing participant copy
   assert.doesNotMatch(joinedCopy(PRE_TASK_COPY), /测试|预览模式/);
 });
 
-test("format override is accepted only in preview or debug mode", () => {
+test("valid fixed-format links select that format and are classified as test", () => {
   assert.equal(
     getRequestedPreviewFormatOverride("?preview=1&format=table"),
     "table"
@@ -373,11 +497,11 @@ test("format override is accepted only in preview or debug mode", () => {
   );
   assert.equal(
     getRequestedPreviewFormatOverride("?format=table"),
-    undefined
+    "table"
   );
   assert.equal(
     getRequestedPreviewFormatOverride("?preview=0&format=video"),
-    undefined
+    "video"
   );
   assert.equal(
     getRequestedPreviewFormatOverride("?preview=1&format=unknown"),
@@ -387,7 +511,7 @@ test("format override is accepted only in preview or debug mode", () => {
     resolveExperimentFormat("?preview=1&format=table", "graph"),
     "table"
   );
-  assert.equal(resolveExperimentFormat("?format=table", "video"), "video");
+  assert.equal(resolveExperimentFormat("?format=table", "video"), "table");
   assert.equal(resolveExperimentFormat("", "graph"), "graph");
   assert.match(mainSource, /resolveExperimentFormat/);
   assert.match(
@@ -417,8 +541,8 @@ test("success and unconfirmed completion states render different, truthful HTML"
   );
   assert.match(unconfirmedHtml, /(?:重试|重新提交)/);
 
-  assert.match(successHtml, /研究人员下载入口/);
-  assert.match(unconfirmedHtml, /研究人员下载入口/);
+  assert.match(successHtml, /下载本人作答备份（可选）/);
+  assert.match(unconfirmedHtml, /下载本人作答备份（可选）/);
 });
 
 test("completion debrief and method disclaimers are absent from participant-facing sources", () => {

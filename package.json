@@ -7,6 +7,11 @@
   ],
   "scripts": {
     "build": "npm run build -w frontend",
-    "test": "npm run test -w frontend"
+    "test": "npm run test -w frontend && npm run test:netlify-export",
+    "test:netlify-export": "tsx --test scripts/tests/netlify-forms-export.test.mjs",
+    "export:netlify": "tsx scripts/netlify-forms-export.mjs"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.1"
   }
 }

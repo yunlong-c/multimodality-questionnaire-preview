@@ -1,0 +1,56 @@
+# Netlify's production branch is selected while linking the repository.
+# Select `main`; these settings then apply to production and preview builds.
+[build]
+  command = "npm --workspace multimodality-frontend run build"
+  publish = "frontend/dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+  VITE_STATIC_PREVIEW = "true"
+  VITE_DEFAULT_DATASET_CLASSIFICATION = "formal"
+  MMQ_EXTERNAL_ASSETS = "false"
+  MMQ_EXCLUDE_ADMIN = "true"
+
+# Netlify Forms needs the normal post-deploy form scan. Research images remain
+# byte-for-byte static: keep deploy processing enabled for Forms detection, but
+# explicitly disable the legacy asset optimizers and any image recompression.
+[build.processing]
+  skip_processing = false
+
+[build.processing.css]
+  bundle = false
+  minify = false
+
+[build.processing.js]
+  bundle = false
+  minify = false
+
+[build.processing.html]
+  pretty_urls = false
+
+[build.processing.images]
+  compress = false
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Content-Security-Policy = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self'; form-action 'self'; worker-src 'self' blob:"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+
+[[headers]]
+  for = "/*.html"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

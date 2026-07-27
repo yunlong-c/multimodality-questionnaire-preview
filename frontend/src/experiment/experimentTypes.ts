@@ -6,6 +6,11 @@ import type {
 } from "../data/manifestTypes";
 
 export type DatasetClassification = "formal" | "test";
+export type AssetLoadStatus =
+  | "not_applicable"
+  | "pending"
+  | "loaded"
+  | "failed";
 
 export interface StartExperimentOptions {
   mount: HTMLElement;
@@ -88,6 +93,9 @@ export interface ExperimentTrial {
   revision_count: number;
   fullscreen_open_count: number | null;
   fullscreen_duration_ms: number | null;
+  asset_load_duration_ms: number | null;
+  asset_load_attempt_count: number;
+  asset_load_status: AssetLoadStatus;
   s1: number | null;
   s2: number | null;
   s3: number | null;
@@ -154,6 +162,9 @@ export const trialCsvHeaders = [
   "revision_count",
   "fullscreen_open_count",
   "fullscreen_duration_ms",
+  "asset_load_duration_ms",
+  "asset_load_attempt_count",
+  "asset_load_status",
   "s1",
   "s2",
   "s3",
