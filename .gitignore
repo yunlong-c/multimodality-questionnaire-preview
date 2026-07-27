@@ -14,3 +14,13 @@ Thumbs.db
 **/source-workbooks/
 **/data/
 **/exports/
+
+# The static questionnaire requires this reviewed public runtime catalog.
+# Whitelist only the exact TypeScript inputs needed by the browser build;
+# private outcome catalogs and arbitrary data directories remain ignored.
+!frontend/src/data/
+!frontend/src/data/manifestSelectors.ts
+!frontend/src/data/manifestTypes.ts
+!frontend/src/data/officialManifest.ts
+!frontend/src/data/releaseInfo.ts
+!frontend/src/data/sequenceCatalog.generated.ts

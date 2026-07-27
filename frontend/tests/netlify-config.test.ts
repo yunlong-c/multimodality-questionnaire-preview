@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
@@ -11,6 +12,13 @@ const netlifyConfig = readFileSync(
   new URL("../../netlify.toml", import.meta.url),
   "utf8"
 );
+const requiredPublicRuntimeFiles = [
+  "frontend/src/data/manifestSelectors.ts",
+  "frontend/src/data/manifestTypes.ts",
+  "frontend/src/data/officialManifest.ts",
+  "frontend/src/data/releaseInfo.ts",
+  "frontend/src/data/sequenceCatalog.generated.ts",
+];
 
 test("Netlify builds the static questionnaire from the repository root", () => {
   assert.match(
@@ -68,6 +76,44 @@ test("the public Netlify build omits the unsupported admin entry", () => {
     ["admin", "questionnaire"]
   );
   assert.match(netlifyConfig, /MMQ_EXCLUDE_ADMIN = "true"/);
+});
+
+test("all required public catalog runtime files are tracked without private outcomes", () => {
+  const trackedRuntimeFiles = execFileSync(
+    "git",
+    ["-C", "..", "ls-files", "--", ...requiredPublicRuntimeFiles],
+    { encoding: "utf8" }
+  )
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .sort();
+
+  assert.deepEqual(trackedRuntimeFiles, [...requiredPublicRuntimeFiles].sort());
+  const trackedPrivateOutcomes = execFileSync(
+    "git",
+    [
+      "-C",
+      "..",
+      "ls-files",
+      "--",
+      "*outcome_catalog*",
+      "*source-workbooks*",
+    ],
+    { encoding: "utf8" }
+  ).trim();
+  assert.equal(trackedPrivateOutcomes, "");
+
+  for (const filename of requiredPublicRuntimeFiles) {
+    const source = readFileSync(
+      new URL(`../${filename.replace("frontend/", "")}`, import.meta.url),
+      "utf8"
+    );
+    assert.doesNotMatch(
+      source,
+      /\by21\b|outcome_catalog|answer_key|ground_truth/i
+    );
+  }
 });
 
 test("cache and security headers keep HTML fresh and allow same-origin Forms", () => {
