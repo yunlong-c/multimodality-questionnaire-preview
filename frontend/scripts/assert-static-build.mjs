@@ -16,7 +16,11 @@ const distDirectory = fileURLToPath(
 );
 const textExtensions = new Set([".html", ".js", ".css"]);
 const forbiddenPatterns = [
-  { label: "legacy backend route", pattern: /\/api(?:\/|["'`])/ },
+  {
+    label: "unapproved API route",
+    pattern:
+      /\/api\/(?!allocate(?:\/reconcile)?(?=["'`?#]|$)|submit(?=["'`?#]|$)|admin\/(?:login|logout|session|stats|export)(?=["'`?#]|$))/,
+  },
   {
     label: "GitHub Raw asset host",
     pattern: /raw\.githubusercontent\.com/i,
@@ -58,17 +62,22 @@ try {
     path.join(distDirectory, "admin.html"),
     constants.F_OK,
   );
-  failures.push("admin.html must not be present");
 } catch {
-  // Expected for the static Netlify build.
+  failures.push("admin.html is missing from the protected Netlify build");
 }
 
 const indexHtml = await readFile(
   path.join(distDirectory, "index.html"),
   "utf8",
 );
-if (!indexHtml.includes('name="mmq-submission-v1"')) {
-  failures.push("index.html is missing mmq-submission-v1");
+for (const formName of [
+  "mmq-submission-v1",
+  "mmq-submission-v2-formal",
+  "mmq-submission-v2-test",
+]) {
+  if (!indexHtml.includes(`name="${formName}"`)) {
+    failures.push(`index.html is missing ${formName}`);
+  }
 }
 
 if (failures.length > 0) {
@@ -78,5 +87,5 @@ if (failures.length > 0) {
 }
 
 console.log(
-  "Static release gate passed: no backend routes, external assets, private outcomes, or admin page.",
+  "Static release gate passed: only allocation and authoritative submission APIs are present; no external assets or private outcomes.",
 );

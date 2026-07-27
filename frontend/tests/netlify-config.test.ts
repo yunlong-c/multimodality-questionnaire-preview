@@ -26,11 +26,15 @@ const requiredPublicRuntimeFiles = [
 test("Netlify builds the static questionnaire from the repository root", () => {
   assert.match(
     netlifyConfig,
-    /command = "npm --workspace multimodality-frontend run build"/
+    /command = "npm run netlify:migrate && npm --workspace multimodality-frontend run build"/
   );
   assert.match(netlifyConfig, /publish = "frontend\/dist"/);
   assert.match(netlifyConfig, /NODE_VERSION = "22"/);
   assert.match(netlifyConfig, /VITE_STATIC_PREVIEW = "true"/);
+  assert.match(
+    netlifyConfig,
+    /VITE_AUTHORITATIVE_SUBMISSION = "true"/
+  );
   assert.match(
     netlifyConfig,
     /VITE_DEFAULT_DATASET_CLASSIFICATION = "formal"/
@@ -38,6 +42,21 @@ test("Netlify builds the static questionnaire from the repository root", () => {
   assert.equal(
     frontendPackage.scripts?.postbuild,
     "node scripts/assert-static-build.mjs"
+  );
+});
+
+test("Netlify production is formal while unpublished deploys stay test-only", () => {
+  assert.match(
+    netlifyConfig,
+    /\[build\.environment\][\s\S]*VITE_DEFAULT_DATASET_CLASSIFICATION\s*=\s*"formal"/
+  );
+  assert.match(
+    netlifyConfig,
+    /\[context\.deploy-preview\.environment\][\s\S]*?VITE_DEFAULT_DATASET_CLASSIFICATION\s*=\s*"test"/
+  );
+  assert.match(
+    netlifyConfig,
+    /\[context\.branch-deploy\.environment\][\s\S]*?VITE_DEFAULT_DATASET_CLASSIFICATION\s*=\s*"test"/
   );
 });
 
@@ -69,8 +88,8 @@ test("Netlify serves the frozen assets locally without rewriting them", () => {
   );
 });
 
-test("the public Netlify build omits the unsupported admin entry", () => {
-  assert.equal(shouldExcludeAdminPage({ NETLIFY: "true" }), true);
+test("the Netlify build includes the protected admin entry", () => {
+  assert.equal(shouldExcludeAdminPage({ NETLIFY: "true" }), false);
   assert.equal(
     shouldExcludeAdminPage({ MMQ_EXCLUDE_ADMIN: "true" }),
     true
@@ -82,7 +101,7 @@ test("the public Netlify build omits the unsupported admin entry", () => {
     Object.keys(createHtmlInputs(false)).sort(),
     ["admin", "questionnaire"]
   );
-  assert.match(netlifyConfig, /MMQ_EXCLUDE_ADMIN = "true"/);
+  assert.doesNotMatch(netlifyConfig, /MMQ_EXCLUDE_ADMIN\s*=/);
 });
 
 test("all required public catalog runtime files are tracked without private outcomes", () => {

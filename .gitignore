@@ -15,6 +15,14 @@ Thumbs.db
 **/data/
 **/exports/
 
+# The randomization schedule is a private allocation-concealment artifact.
+# Only its one-way public metadata/hash under netlify/randomization is tracked.
+.private/
+private/
+**/private-schedule*.json
+**/randomization-schedule*.private.json
+**/randomization-seed*
+
 # The static questionnaire requires this reviewed public runtime catalog.
 # Whitelist only the exact TypeScript inputs needed by the browser build;
 # private outcome catalogs and arbitrary data directories remain ignored.
@@ -24,3 +32,6 @@ Thumbs.db
 !frontend/src/data/officialManifest.ts
 !frontend/src/data/releaseInfo.ts
 !frontend/src/data/sequenceCatalog.generated.ts
+
+# Local Netlify folder
+.netlify

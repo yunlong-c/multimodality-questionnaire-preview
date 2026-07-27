@@ -7,11 +7,13 @@ const pagesBase =
 const frontendRoot = fileURLToPath(new URL(".", import.meta.url));
 const staticPreviewBuild =
   process.env.VITE_STATIC_PREVIEW === "true";
+const authoritativeSubmissionBuild =
+  process.env.VITE_AUTHORITATIVE_SUBMISSION === "true";
 
 export function shouldExcludeAdminPage(
   env: NodeJS.ProcessEnv = process.env
 ): boolean {
-  return env.MMQ_EXCLUDE_ADMIN === "true" || env.NETLIFY === "true";
+  return env.MMQ_EXCLUDE_ADMIN === "true";
 }
 
 export function createHtmlInputs(
@@ -33,6 +35,9 @@ export default defineConfig({
   define: {
     __MMQ_STATIC_PREVIEW__: JSON.stringify(
       staticPreviewBuild
+    ),
+    __MMQ_AUTHORITATIVE_SUBMISSION__: JSON.stringify(
+      authoritativeSubmissionBuild
     ),
   },
   resolve: {

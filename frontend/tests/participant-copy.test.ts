@@ -31,11 +31,28 @@ import {
   resolveExperimentFormat
 } from "../src/config/runtimeMode";
 import {
-  NETLIFY_FORM_NAME,
+  AuthoritativeSubmissionError,
+  NETLIFY_FORM_NAMES,
+  PENDING_SUBMISSION_STORAGE_KEY,
   buildNetlifyFormSubmission,
+  clearPendingSubmission,
+  createPendingSubmissionRecord,
+  createNetlifySubmissionTransportState,
+  persistPendingSubmission,
+  postAuthoritativeSubmission,
   postNetlifyForm,
+  prepareNetlifyFormAttempt,
+  readPendingSubmission,
+  reconcilePendingFallbackForAuthority,
   resolveStaticCollectionState
 } from "../src/api/client";
+import {
+  FORMAL_ASSIGNMENT_STORAGE_KEY,
+  RANDOMIZATION_VERSION,
+  allocateFormalParticipant,
+  randomFormatWithWebCrypto,
+  reconcileFallbackBeforeSubmit
+} from "../src/api/formalAllocation";
 import type { ExperimentPayload } from "../src/experiment/experimentTypes";
 
 const mainSource = readFileSync(path.resolve("src/main.ts"), "utf8");
@@ -58,6 +75,13 @@ const netlifyTestPayload: ExperimentPayload = {
     catalog_hash: catalogHash,
     dataset_classification: "formal",
     formal_collection_allowed: true,
+    allocation_id: "allocation-form-test",
+    randomization_version: "mmq-randomization-2026-07-v1",
+    allocation_method: "variable_block",
+    allocation_status: "confirmed",
+    assigned_at: "2026-07-27T00:59:59.000Z",
+    fallback_reason_code: null,
+    fallback_reconciled_at: null,
     started_at: "2026-07-27T01:00:00.000Z",
     submitted_at: "2026-07-27T01:05:00.000Z",
     duration_ms: 300000
@@ -82,6 +106,10 @@ const completionSource = readFileSync(
   path.resolve("src/submission/completion.ts"),
   "utf8"
 );
+const apiClientSource = readFileSync(
+  path.resolve("src/api/client.ts"),
+  "utf8"
+);
 const participantCopySource = readFileSync(
   path.resolve("src/content/participantCopy.ts"),
   "utf8"
@@ -90,6 +118,46 @@ const stylesSource = readFileSync(
   path.resolve("src/styles/main.css"),
   "utf8"
 );
+
+function createMemoryStorage(): Pick<
+  Storage,
+  "getItem" | "setItem" | "removeItem"
+> {
+  const values = new Map<string, string>();
+  return {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => {
+      values.set(key, value);
+    },
+    removeItem: (key) => {
+      values.delete(key);
+    }
+  };
+}
+
+function successfulAllocationResponse(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    participant_id: "participant-allocation-test",
+    client_token: "client-allocation-test-0001",
+    format_assignment: "graph",
+    session_id: "session-allocation-test-0001",
+    is_returning: false,
+    dataset_classification: "formal",
+    formal_collection_allowed: true,
+    stimulus_set_version: stimulusSetVersion,
+    catalog_hash: catalogHash,
+    allocation_id: "allocation-variable-test-0001",
+    randomization_version: RANDOMIZATION_VERSION,
+    allocation_method: "variable_block",
+    allocation_status: "confirmed",
+    assigned_at: "2026-07-27T01:00:00.000Z",
+    fallback_reason_code: null,
+    fallback_reconciled_at: null,
+    ...overrides
+  };
+}
 
 function collectCopyText(value: unknown): string[] {
   if (typeof value === "string") {
@@ -369,16 +437,73 @@ test("trial five renders a collapsed read-only example and leaves answer inputs 
   assert.doesNotMatch(trialRenderingSource, /\/assets\/ui\/example\.png/);
 });
 
-test("submission resolution distinguishes confirmed success from unconfirmed submission", async () => {
-  assert.equal(
-    await resolveSubmissionState(async () => undefined),
-    "success"
+test("compact participant chrome preserves all stimulus dimensions", () => {
+  assert.match(
+    stylesSource,
+    /\.stimulus-media-frame\s*\{[\s\S]*?width:\s*min\(820px,\s*100%\)/
   );
-  assert.equal(
+  assert.match(
+    stylesSource,
+    /\.series-image\s*\{[\s\S]*?width:\s*100%[\s\S]*?height:\s*auto/
+  );
+  assert.match(
+    stylesSource,
+    /\.series-table-grid\s*\{[\s\S]*?width:\s*min\(640px,\s*100%\)/
+  );
+  assert.match(
+    stylesSource,
+    /\.series-table th,\s*\.series-table td\s*\{[\s\S]*?height:\s*37px/
+  );
+  assert.match(
+    stylesSource,
+    /\.series-table td\s*\{[\s\S]*?font-size:\s*1rem/
+  );
+  assert.doesNotMatch(stylesSource, /\bzoom\s*:/);
+  assert.doesNotMatch(stylesSource, /transform:\s*scale\(/);
+  assert.match(
+    stylesSource,
+    /\.field input,[\s\S]*?font-size:\s*1rem/
+  );
+  assert.match(
+    stylesSource,
+    /\.button,[\s\S]*?min-height:\s*46px/
+  );
+});
+
+test("submission resolution distinguishes confirmed success from unconfirmed submission", async () => {
+  assert.deepEqual(
+    await resolveSubmissionState(async () => ({
+      status: "confirmed",
+      receipt: {
+        receiptId: "receipt-test-0001",
+        sessionId: "session-form-test",
+        participantId: "participant-form-test",
+        datasetClassification: "formal",
+        payloadSha256: "a".repeat(64),
+        storedAt: "2026-07-27T01:05:01.000Z",
+        isReplay: false,
+        authority: "netlify_database",
+        mirrorStatus: "pending"
+      }
+    })),
+    {
+      state: "success",
+      receiptId: "receipt-test-0001",
+      storedAt: "2026-07-27T01:05:01.000Z"
+    }
+  );
+  assert.deepEqual(
+    await resolveSubmissionState(async () => ({
+      status: "local_preview",
+      payloadSha256: "b".repeat(64)
+    })),
+    { state: "local_preview" }
+  );
+  assert.deepEqual(
     await resolveSubmissionState(async () => {
       throw new Error("simulated network failure");
     }),
-    "unconfirmed"
+    { state: "unconfirmed" }
   );
 });
 
@@ -397,8 +522,361 @@ test("static collection defaults to formal only when configured and test links a
   });
 });
 
-test("Netlify form declaration and encoded submission contain the audited payload and SHA-256", async () => {
+test("formal allocation retries two transient failures and then persists a Web Crypto fallback", async () => {
+  const storage = createMemoryStorage();
+  let requestCount = 0;
+  const attemptedSessionIds: string[] = [];
+  const unavailableFetch: typeof fetch = async (_input, init) => {
+    requestCount += 1;
+    const request = JSON.parse(String(init?.body)) as {
+      session_id?: string;
+    };
+    attemptedSessionIds.push(request.session_id ?? "");
+    return Response.json(
+      {
+        error: {
+          code: "ALLOCATION_UNAVAILABLE",
+          message: "temporarily unavailable"
+        }
+      },
+      { status: 503 }
+    );
+  };
+
+  const result = await allocateFormalParticipant(
+    "client-allocation-test-0001",
+    {
+      fetchImplementation: unavailableFetch,
+      storage,
+      retryDelaysMs: [0, 0]
+    }
+  );
+
+  assert.equal(requestCount, 3);
+  assert.equal(new Set(attemptedSessionIds).size, 1);
+  assert.notEqual(attemptedSessionIds[0], result.session_id);
+  assert.ok(
+    attemptedSessionIds.every(
+      (attemptSessionId) => attemptSessionId !== result.session_id
+    )
+  );
+  assert.equal(result.dataset_classification, "formal");
+  assert.equal(result.formal_collection_allowed, true);
+  assert.equal(result.allocation_method, "client_fallback");
+  assert.equal(result.allocation_status, "unreconciled");
+  assert.equal(
+    result.fallback_reason_code,
+    "allocation_server_error"
+  );
+  assert.ok(["table", "graph", "video"].includes(result.format_assignment));
+  assert.ok(storage.getItem(FORMAL_ASSIGNMENT_STORAGE_KEY));
+
+  const firstAllocationId = result.allocation_id;
+  const firstFormat = result.format_assignment;
+  const returning = await allocateFormalParticipant(
+    "client-allocation-test-0001",
+    {
+      fetchImplementation: async () => {
+        throw new TypeError("network unavailable");
+      },
+      storage,
+      retryDelaysMs: [0, 0]
+    }
+  );
+  assert.equal(returning.allocation_id, firstAllocationId);
+  assert.equal(returning.format_assignment, firstFormat);
+  assert.equal(returning.participant_id, result.participant_id);
+  assert.equal(returning.is_returning, true);
+  assert.notEqual(returning.session_id, result.session_id);
+});
+
+test("formal allocation never falls back for catalog, capacity, collection, or other 4xx rejection", async () => {
+  for (const [status, code] of [
+    [400, "INVALID_REQUEST"],
+    [409, "CATALOG_MISMATCH"],
+    [409, "SCHEDULE_MISMATCH"],
+    [409, "SCHEDULE_EXHAUSTED"],
+    [423, "COLLECTION_CLOSED"]
+  ] as const) {
+    const storage = createMemoryStorage();
+    let requestCount = 0;
+    await assert.rejects(
+      allocateFormalParticipant("client-allocation-test-0001", {
+        fetchImplementation: async () => {
+          requestCount += 1;
+          return Response.json(
+            { error: { code, message: code } },
+            { status }
+          );
+        },
+        storage,
+        retryDelaysMs: [0, 0]
+      }),
+      (error: unknown) =>
+        error instanceof Error &&
+        "code" in error &&
+        error.code === code
+    );
+    assert.equal(requestCount, 1);
+    assert.equal(
+      storage.getItem(FORMAL_ASSIGNMENT_STORAGE_KEY),
+      null
+    );
+  }
+});
+
+test("formal allocation classifies an aborted request as a timeout fallback", async () => {
+  const result = await allocateFormalParticipant(
+    "client-allocation-test-0001",
+    {
+      fetchImplementation: async (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () =>
+              reject(
+                new DOMException("request aborted", "AbortError")
+              ),
+            { once: true }
+          );
+        }),
+      storage: createMemoryStorage(),
+      attemptTimeoutMs: 2,
+      retryDelaysMs: [0, 0]
+    }
+  );
+
+  assert.equal(result.allocation_method, "client_fallback");
+  assert.equal(result.fallback_reason_code, "allocation_timeout");
+});
+
+test("formal allocation classifies a fetch rejection as a network fallback", async () => {
+  const result = await allocateFormalParticipant(
+    "client-allocation-test-0001",
+    {
+      fetchImplementation: async () => {
+        throw new TypeError("network unavailable");
+      },
+      storage: createMemoryStorage(),
+      retryDelaysMs: [0, 0]
+    }
+  );
+
+  assert.equal(result.allocation_method, "client_fallback");
+  assert.equal(
+    result.fallback_reason_code,
+    "allocation_network_error"
+  );
+});
+
+test("server allocation is persisted and cannot silently change on a later visit", async () => {
+  const storage = createMemoryStorage();
+  const clientToken = "client-allocation-test-0001";
+  const first = await allocateFormalParticipant(clientToken, {
+    fetchImplementation: async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as {
+        session_id: string;
+      };
+      return Response.json(
+        successfulAllocationResponse({
+          session_id: request.session_id
+        })
+      );
+    },
+    storage,
+    retryDelaysMs: [0, 0]
+  });
+  assert.equal(first.allocation_method, "variable_block");
+
+  await assert.rejects(
+    allocateFormalParticipant(clientToken, {
+      fetchImplementation: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as {
+          session_id: string;
+        };
+        return Response.json(
+          successfulAllocationResponse({
+            format_assignment: "video",
+            session_id: request.session_id
+          })
+        );
+      },
+      storage,
+      retryDelaysMs: [0, 0]
+    }),
+    /change an existing formal assignment/
+  );
+});
+
+test("Web Crypto selection maps an unbiased uint32 draw to the three formats", () => {
+  for (const [draw, expected] of [
+    [0, "table"],
+    [1, "graph"],
+    [2, "video"]
+  ] as const) {
+    assert.equal(
+      randomFormatWithWebCrypto({
+        getRandomValues: (values) => {
+          (values as Uint32Array)[0] = draw;
+          return values;
+        }
+      }),
+      expected
+    );
+  }
+
+  const draws = [0xffffffff, 2];
+  assert.equal(
+    randomFormatWithWebCrypto({
+      getRandomValues: (values) => {
+        (values as Uint32Array)[0] = draws.shift() ?? 0;
+        return values;
+      }
+    }),
+    "video"
+  );
+});
+
+test("fallback reconciliation upgrades audit metadata but never blocks the Forms payload", async () => {
+  const payload = structuredClone(netlifyTestPayload);
+  payload.session = {
+    ...payload.session,
+    participant_id: "fallback-participant-test-0001",
+    session_id: "fallback-session-test-0001",
+    format_assignment: "video",
+    allocation_id: "fallback-allocation-test-0001",
+    randomization_version: RANDOMIZATION_VERSION,
+    allocation_method: "client_fallback",
+    allocation_status: "unreconciled",
+    assigned_at: "2026-07-27T00:59:00.000Z",
+    fallback_reason_code: "allocation_network_error",
+    fallback_reconciled_at: null
+  };
+
+  await reconcileFallbackBeforeSubmit(
+    payload,
+    "client-allocation-test-0001",
+    {
+      fetchImplementation: async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as Record<
+          string,
+          unknown
+        >;
+        return Response.json(
+          successfulAllocationResponse({
+            participant_id: request.participant_id,
+            session_id: request.session_id,
+            format_assignment: request.format_assignment,
+            allocation_id: request.allocation_id,
+            allocation_method: "client_fallback",
+            assigned_at: request.assigned_at,
+            fallback_reason_code: request.fallback_reason_code,
+            fallback_reconciled_at: "2026-07-27T01:05:01.000Z"
+          })
+        );
+      },
+      storage: createMemoryStorage()
+    }
+  );
+
+  assert.equal(payload.session.allocation_status, "confirmed");
+  assert.equal(
+    payload.session.fallback_reconciled_at,
+    "2026-07-27T01:05:01.000Z"
+  );
+  assert.equal(payload.session.format_assignment, "video");
+
+  payload.session.allocation_status = "unreconciled";
+  payload.session.fallback_reconciled_at = null;
+  await assert.doesNotReject(
+    reconcileFallbackBeforeSubmit(
+      payload,
+      "client-allocation-test-0001",
+      {
+        fetchImplementation: async () =>
+          Response.json(
+            {
+              error: {
+                code: "ALLOCATION_UNAVAILABLE",
+                message: "still unavailable"
+              }
+            },
+            { status: 503 }
+          ),
+        storage: createMemoryStorage()
+      }
+    )
+  );
+  assert.equal(payload.session.allocation_status, "unreconciled");
+  assert.equal(payload.session.fallback_reconciled_at, null);
+});
+
+test("Forms retries reconcile once and resend one frozen payload hash", async () => {
+  const payload = structuredClone(netlifyTestPayload);
+  payload.session = {
+    ...payload.session,
+    allocation_id: "fallback-allocation-freeze-0001",
+    allocation_method: "client_fallback",
+    allocation_status: "unreconciled",
+    fallback_reason_code: "allocation_server_error",
+    fallback_reconciled_at: null
+  };
+  const state = createNetlifySubmissionTransportState();
+  let reconciliationCount = 0;
+  const reconcileOnce = async (): Promise<void> => {
+    reconciliationCount += 1;
+    payload.session.allocation_status = "confirmed";
+    payload.session.fallback_reconciled_at =
+      "2026-07-27T01:05:01.000Z";
+  };
+
+  const firstAttempt = await prepareNetlifyFormAttempt(
+    state,
+    payload,
+    reconcileOnce
+  );
+  state.lastCompletedAttemptLatencyMs = 731;
+
+  // A later in-memory change must not alter the audit record or hash sent by
+  // the retry. Only the transport diagnostics may change.
+  payload.session.allocation_status = "unreconciled";
+  payload.session.fallback_reconciled_at = null;
+  payload.session.duration_ms = 999999;
+  const retryAttempt = await prepareNetlifyFormAttempt(
+    state,
+    payload,
+    reconcileOnce
+  );
+
+  assert.equal(reconciliationCount, 1);
+  assert.equal(firstAttempt.payloadJson, retryAttempt.payloadJson);
+  assert.equal(firstAttempt.payloadSha256, retryAttempt.payloadSha256);
+  assert.equal(
+    firstAttempt.body.get("payload_sha256"),
+    retryAttempt.body.get("payload_sha256")
+  );
+  assert.equal(
+    firstAttempt.body.get("allocation_status"),
+    "confirmed"
+  );
+  assert.equal(
+    retryAttempt.body.get("allocation_status"),
+    "confirmed"
+  );
+  assert.equal(
+    retryAttempt.body.get("fallback_reconciled_at"),
+    "2026-07-27T01:05:01.000Z"
+  );
+  assert.equal(firstAttempt.body.get("submit_attempt_count"), "1");
+  assert.equal(retryAttempt.body.get("submit_attempt_count"), "2");
+  assert.equal(firstAttempt.body.get("submit_latency_ms"), "");
+  assert.equal(retryAttempt.body.get("submit_latency_ms"), "731");
+});
+
+test("v2 Netlify emergency forms remain separated while v1 is frozen", async () => {
   assert.match(indexSource, /name="mmq-submission-v1"/);
+  assert.match(indexSource, /name="mmq-submission-v2-formal"/);
+  assert.match(indexSource, /name="mmq-submission-v2-test"/);
   assert.match(indexSource, /data-netlify="true"/);
   for (const field of [
     "session_id",
@@ -409,9 +887,20 @@ test("Netlify form declaration and encoded submission contain the audited payloa
     "catalog_hash",
     "submitted_at",
     "payload_sha256",
+    "allocation_id",
+    "randomization_version",
+    "allocation_method",
+    "allocation_status",
+    "assigned_at",
+    "fallback_reason_code",
+    "fallback_reconciled_at",
     "payload_json",
     "submit_attempt_count",
-    "submit_latency_ms"
+    "submit_latency_ms",
+    "receipt_id",
+    "submission_authority",
+    "mirror_status",
+    "mirror_source"
   ]) {
     assert.match(indexSource, new RegExp(`name="${field}"`));
   }
@@ -428,21 +917,65 @@ test("Netlify form declaration and encoded submission contain the audited payloa
 
   assert.equal(submission.payloadJson, expectedJson);
   assert.equal(submission.payloadSha256, expectedHash);
-  assert.equal(submission.body.get("form-name"), NETLIFY_FORM_NAME);
+  assert.equal(
+    submission.body.get("form-name"),
+    NETLIFY_FORM_NAMES.formal
+  );
   assert.equal(submission.body.get("payload_json"), expectedJson);
   assert.equal(submission.body.get("payload_sha256"), expectedHash);
+  assert.equal(
+    submission.body.get("allocation_id"),
+    "allocation-form-test"
+  );
+  assert.equal(
+    submission.body.get("randomization_version"),
+    "mmq-randomization-2026-07-v1"
+  );
+  assert.equal(
+    submission.body.get("allocation_method"),
+    "variable_block"
+  );
+  assert.equal(submission.body.get("allocation_status"), "confirmed");
+  assert.equal(
+    submission.body.get("assigned_at"),
+    "2026-07-27T00:59:59.000Z"
+  );
+  assert.equal(submission.body.get("fallback_reason_code"), "");
+  assert.equal(submission.body.get("fallback_reconciled_at"), "");
   assert.equal(submission.body.get("submit_attempt_count"), "2");
   assert.equal(submission.body.get("submit_latency_ms"), "431");
   assert.equal(
     submission.body.get("submit_latency_scope"),
     "previous_completed_attempt"
   );
+  assert.equal(
+    submission.body.get("mirror_status"),
+    "emergency_unconfirmed"
+  );
+  assert.equal(
+    submission.body.get("mirror_source"),
+    "client_emergency"
+  );
+  assert.equal(submission.body.get("receipt_id"), "");
   assert.equal(submission.body.has("ip"), false);
   assert.equal(submission.body.has("location"), false);
   assert.equal(submission.body.has("device_fingerprint"), false);
+
+  const testPayload = structuredClone(netlifyTestPayload);
+  testPayload.session.dataset_classification = "test";
+  testPayload.session.formal_collection_allowed = false;
+  const testSubmission = await buildNetlifyFormSubmission(
+    testPayload,
+    1,
+    null
+  );
+  assert.equal(
+    testSubmission.body.get("form-name"),
+    NETLIFY_FORM_NAMES.test
+  );
 });
 
-test("Netlify Forms accepts only a 2xx response as confirmed success", async () => {
+test("Netlify Forms 2xx only confirms an emergency copy, never authority", async () => {
   const submission = await buildNetlifyFormSubmission(
     netlifyTestPayload,
     1,
@@ -458,12 +991,329 @@ test("Netlify Forms accepts only a 2xx response as confirmed success", async () 
     new URLSearchParams(observedBody).get("payload_sha256"),
     submission.payloadSha256
   );
+  assert.equal(
+    new URLSearchParams(observedBody).get("form-name"),
+    NETLIFY_FORM_NAMES.formal
+  );
 
   const failedFetch: typeof fetch = async () =>
     new Response(null, { status: 503 });
   await assert.rejects(
     postNetlifyForm(submission, failedFetch),
     /Netlify Forms submit failed: 503/
+  );
+});
+
+test("pending payload is frozen before transport and cleared only by matching hash", async () => {
+  const storage = createMemoryStorage();
+  const submission = await buildNetlifyFormSubmission(
+    netlifyTestPayload,
+    1,
+    null
+  );
+  const pending = createPendingSubmissionRecord(
+    {
+      payloadJson: submission.payloadJson,
+      payloadSha256: submission.payloadSha256,
+      payloadSnapshot: structuredClone(netlifyTestPayload)
+    },
+    "client-submit-test-0001",
+    () => new Date("2026-07-27T01:05:00.100Z")
+  );
+
+  persistPendingSubmission(pending, storage);
+  assert.equal(
+    storage.getItem(PENDING_SUBMISSION_STORAGE_KEY) !== null,
+    true
+  );
+  assert.deepEqual(readPendingSubmission(storage), pending);
+
+  clearPendingSubmission("f".repeat(64), storage);
+  assert.deepEqual(readPendingSubmission(storage), pending);
+  clearPendingSubmission(pending.payload_sha256, storage);
+  assert.equal(readPendingSubmission(storage), null);
+});
+
+test("unreconciled fallback survives Forms backup and later upgrades to one authoritative receipt", async () => {
+  const storage = createMemoryStorage();
+  const fallbackPayload = structuredClone(netlifyTestPayload);
+  fallbackPayload.session = {
+    ...fallbackPayload.session,
+    session_id: "fallback-session-recovery-0001",
+    participant_id: "fallback-participant-recovery-0001",
+    format_assignment: "video",
+    allocation_id: "fallback-allocation-recovery-0001",
+    allocation_method: "client_fallback",
+    allocation_status: "unreconciled",
+    fallback_reason_code: "allocation_server_error",
+    fallback_reconciled_at: null
+  };
+  const initialSubmission = await buildNetlifyFormSubmission(
+    fallbackPayload,
+    0,
+    null
+  );
+  const initialPending = createPendingSubmissionRecord(
+    {
+      payloadJson: initialSubmission.payloadJson,
+      payloadSha256: initialSubmission.payloadSha256,
+      payloadSnapshot: structuredClone(fallbackPayload)
+    },
+    "client-fallback-recovery-0001"
+  );
+  persistPendingSubmission(initialPending, storage);
+
+  const stillPending =
+    await reconcilePendingFallbackForAuthority(
+      initialPending,
+      "client-fallback-recovery-0001",
+      async () => {
+        // Simulates a transient reconciliation failure: payload remains
+        // unreconciled and must not be sent to the authority endpoint.
+      },
+      storage
+    );
+  assert.equal(stillPending.readyForAuthority, false);
+  assert.equal(stillPending.hashUpdated, false);
+  assert.equal(
+    stillPending.pending.payload_sha256,
+    initialPending.payload_sha256
+  );
+
+  const emergencyCopy = await buildNetlifyFormSubmission(
+    JSON.parse(initialPending.payload_json) as ExperimentPayload,
+    1,
+    null
+  );
+  let emergencyBody = "";
+  await postNetlifyForm(
+    emergencyCopy,
+    async (_input, init) => {
+      emergencyBody = String(init?.body ?? "");
+      return new Response(null, { status: 204 });
+    }
+  );
+  assert.equal(
+    new URLSearchParams(emergencyBody).get("form-name"),
+    NETLIFY_FORM_NAMES.formal
+  );
+  assert.equal(
+    new URLSearchParams(emergencyBody).get("payload_sha256"),
+    initialPending.payload_sha256
+  );
+  initialPending.emergency_form_sent_at =
+    "2026-07-27T01:05:01.000Z";
+  persistPendingSubmission(initialPending, storage);
+
+  const restoredAfterRefresh = readPendingSubmission(storage);
+  assert.ok(restoredAfterRefresh);
+  const reconciled =
+    await reconcilePendingFallbackForAuthority(
+      restoredAfterRefresh,
+      "client-fallback-recovery-0001",
+      async (payload) => {
+        payload.session.allocation_status = "confirmed";
+        payload.session.fallback_reconciled_at =
+          "2026-07-27T01:05:02.000Z";
+      },
+      storage
+    );
+  assert.equal(reconciled.readyForAuthority, true);
+  assert.equal(reconciled.hashUpdated, true);
+  assert.notEqual(
+    reconciled.pending.payload_sha256,
+    initialPending.payload_sha256
+  );
+  assert.equal(reconciled.pending.emergency_form_sent_at, null);
+  const reconciledPayload = JSON.parse(
+    reconciled.pending.payload_json
+  ) as ExperimentPayload;
+  assert.equal(
+    reconciledPayload.session.session_id,
+    fallbackPayload.session.session_id
+  );
+  assert.equal(
+    reconciledPayload.session.format_assignment,
+    fallbackPayload.session.format_assignment
+  );
+  assert.equal(
+    reconciledPayload.session.allocation_status,
+    "confirmed"
+  );
+  assert.deepEqual(
+    reconciledPayload.trials,
+    fallbackPayload.trials
+  );
+  assert.deepEqual(
+    reconciledPayload.demographics,
+    fallbackPayload.demographics
+  );
+
+  let authorityPayloadHash = "";
+  const receipt = await postAuthoritativeSubmission(
+    reconciled.pending,
+    async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as {
+        payload_sha256: string;
+      };
+      authorityPayloadHash = request.payload_sha256;
+      return Response.json(
+        {
+          receipt_id: "receipt-fallback-recovery-0001",
+          session_id: fallbackPayload.session.session_id,
+          participant_id:
+            fallbackPayload.session.participant_id,
+          dataset_classification: "formal",
+          payload_sha256: reconciled.pending.payload_sha256,
+          stored_at: "2026-07-27T01:05:03.000Z",
+          is_replay: false,
+          authority: "netlify_database",
+          mirror_status: "pending"
+        },
+        { status: 201 }
+      );
+    }
+  );
+  assert.equal(
+    authorityPayloadHash,
+    reconciled.pending.payload_sha256
+  );
+  assert.equal(
+    receipt.receiptId,
+    "receipt-fallback-recovery-0001"
+  );
+});
+
+test("authoritative submit requires a matching database receipt", async () => {
+  const submission = await buildNetlifyFormSubmission(
+    netlifyTestPayload,
+    1,
+    null
+  );
+  const pending = createPendingSubmissionRecord(
+    {
+      payloadJson: submission.payloadJson,
+      payloadSha256: submission.payloadSha256,
+      payloadSnapshot: structuredClone(netlifyTestPayload)
+    },
+    "client-submit-test-0001"
+  );
+  let observedRequest: Record<string, unknown> | null = null;
+  const receipt = await postAuthoritativeSubmission(
+    pending,
+    async (input, init) => {
+      assert.equal(String(input), "/api/submit");
+      observedRequest = JSON.parse(String(init?.body)) as Record<
+        string,
+        unknown
+      >;
+      return Response.json(
+        {
+          receipt_id: "receipt-authority-test-0001",
+          session_id: netlifyTestPayload.session.session_id,
+          participant_id:
+            netlifyTestPayload.session.participant_id,
+          dataset_classification: "formal",
+          payload_sha256: submission.payloadSha256,
+          stored_at: "2026-07-27T01:05:01.000Z",
+          is_replay: false,
+          authority: "netlify_database",
+          mirror_status: "pending"
+        },
+        { status: 201 }
+      );
+    }
+  );
+
+  assert.equal(receipt.receiptId, "receipt-authority-test-0001");
+  assert.equal(receipt.payloadSha256, submission.payloadSha256);
+  assert.equal(observedRequest?.schema_version, 1);
+  assert.equal(
+    observedRequest?.client_token,
+    "client-submit-test-0001"
+  );
+  assert.equal(
+    observedRequest?.payload_json,
+    submission.payloadJson
+  );
+  assert.equal(
+    observedRequest?.payload_sha256,
+    submission.payloadSha256
+  );
+  assert.deepEqual(observedRequest?.transport, {
+    client_attempt_count: 1,
+    previous_attempt_latency_ms: null
+  });
+
+  const mismatchedPending = {
+    ...pending,
+    attempt_count: 0,
+    previous_attempt_latency_ms: null
+  };
+  await assert.rejects(
+    postAuthoritativeSubmission(
+      mismatchedPending,
+      async () =>
+        Response.json(
+          {
+            receipt_id: "receipt-wrong-hash",
+            session_id: netlifyTestPayload.session.session_id,
+            participant_id:
+              netlifyTestPayload.session.participant_id,
+            dataset_classification: "formal",
+            payload_sha256: "0".repeat(64),
+            stored_at: "2026-07-27T01:05:01.000Z",
+            is_replay: false,
+            authority: "netlify_database",
+            mirror_status: "pending"
+          },
+          { status: 201 }
+        )
+    ),
+    /did not match the frozen submission/
+  );
+
+  const conflictPending = {
+    ...pending,
+    attempt_count: 0,
+    previous_attempt_latency_ms: null
+  };
+  await assert.rejects(
+    postAuthoritativeSubmission(
+      conflictPending,
+      async () =>
+        Response.json(
+          {
+            error: {
+              code: "SUBMISSION_CONFLICT",
+              message: "a different payload already exists",
+              retryable: false
+            }
+          },
+          { status: 409 }
+        )
+    ),
+    (error: unknown) =>
+      error instanceof AuthoritativeSubmissionError &&
+      error.code === "SUBMISSION_CONFLICT" &&
+      error.retryable === false
+  );
+});
+
+test("Deploy Preview test data uses authority and cannot treat Forms as saved", () => {
+  assert.match(apiClientSource, /AUTHORITATIVE_SUBMIT_ENDPOINT\s*=\s*"\/api\/submit"/);
+  assert.match(
+    apiClientSource,
+    /if\s*\(!usesAuthoritativeSubmissionTransport\(\)\)[\s\S]*?status:\s*"local_preview"/
+  );
+  assert.doesNotMatch(apiClientSource, /isNetlifyFormsMode/);
+  assert.match(
+    completionSource,
+    /result\.status\s*===\s*"confirmed"/
+  );
+  assert.doesNotMatch(
+    completionSource,
+    /await submit\(\);\s*return\s+"success"/
   );
 });
 
@@ -521,11 +1371,28 @@ test("valid fixed-format links select that format and are classified as test", (
 });
 
 test("success and unconfirmed completion states render different, truthful HTML", () => {
-  const successHtml = buildCompletionHtml("success", 5);
-  const unconfirmedHtml = buildCompletionHtml("unconfirmed", 5);
+  const successHtml = buildCompletionHtml(
+    {
+      state: "success",
+      receiptId: "receipt-display-test-0001",
+      storedAt: "2026-07-27T01:05:01.000Z"
+    },
+    5
+  );
+  const unconfirmedHtml = buildCompletionHtml(
+    { state: "unconfirmed" },
+    5
+  );
+  const localPreviewHtml = buildCompletionHtml(
+    { state: "local_preview" },
+    5
+  );
 
   assert.notEqual(successHtml, unconfirmedHtml);
-  assert.match(successHtml, /(?:提交成功|已成功提交)/);
+  assert.match(
+    successHtml,
+    /(?:提交成功|已成功提交|已由研究服务器确认保存)/
+  );
   assert.doesNotMatch(
     successHtml,
     /(?:尚未确认|未确认提交|提交未成功|重新提交)/
@@ -540,14 +1407,33 @@ test("success and unconfirmed completion states render different, truthful HTML"
     /(?:您的作答已成功提交|您现在可以关闭|安全地关闭|data-completion-status="success")/
   );
   assert.match(unconfirmedHtml, /(?:重试|重新提交)/);
+  assert.match(successHtml, /receipt-display-test-0001/);
+  assert.match(successHtml, /已由研究服务器确认保存/);
+  assert.match(unconfirmedHtml, /主存储/);
+  assert.doesNotMatch(unconfirmedHtml, /已由研究服务器确认保存/);
+  assert.match(localPreviewHtml, /没有发送到研究服务器/);
+  assert.doesNotMatch(
+    localPreviewHtml,
+    /data-completion-status="success"/
+  );
 
   assert.match(successHtml, /下载本人作答备份（可选）/);
   assert.match(unconfirmedHtml, /下载本人作答备份（可选）/);
 });
 
 test("completion debrief and method disclaimers are absent from participant-facing sources", () => {
-  const successHtml = buildCompletionHtml("success", 5);
-  const unconfirmedHtml = buildCompletionHtml("unconfirmed", 5);
+  const successHtml = buildCompletionHtml(
+    {
+      state: "success",
+      receiptId: "receipt-copy-test-0001",
+      storedAt: "2026-07-27T01:05:01.000Z"
+    },
+    5
+  );
+  const unconfirmedHtml = buildCompletionHtml(
+    { state: "unconfirmed" },
+    5
+  );
 
   const renderedSources =
     `${participantCopySource}\n${trialRenderingSource}\n${completionSource}`;

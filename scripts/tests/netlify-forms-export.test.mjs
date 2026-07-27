@@ -175,11 +175,20 @@ test("organizer binds valid submissions to the real frozen catalog and preserves
   assert.equal(formalParticipants[0].demographics_gender, "女");
   assert.equal(formalParticipants[0].netlify_submit_attempt_count, "1");
   assert.equal(formalParticipants[0].netlify_submit_latency_ms, "");
+  assert.equal(formalParticipants[0].allocation_method, "variable_block");
+  assert.equal(formalParticipants[0].allocation_status, "confirmed");
 
   const formalTrials = await readCsvRecords(
     path.join(outputPath, "formal", "trials.csv")
   );
   assert.equal(formalTrials.length, 5);
+  assert.ok(
+    formalTrials.every(
+      (row) =>
+        row.allocation_method === "variable_block" &&
+        row.randomization_version === "mmq-randomization-2026-07-v1"
+    )
+  );
   assert.deepEqual(
     formalTrials.map((row) => row.trial_no),
     ["1", "2", "3", "4", "5"]
@@ -230,6 +239,409 @@ test("organizer binds valid submissions to the real frozen catalog and preserves
     path.join(outputPath, "invalid-submissions.csv")
   );
   assert.equal(invalid.length, 0);
+});
+
+test("fallback reconciliation is treated as a state upgrade rather than an answer conflict", async () => {
+  const temporaryRoot = await mkdtemp(
+    path.join(os.tmpdir(), "mmq-netlify-fallback-upgrade-")
+  );
+  const inputPath = path.join(temporaryRoot, "netlify.csv");
+  const outputPath = path.join(temporaryRoot, "organized");
+  const unreconciled = makePayload({
+    sessionId: "session-fallback-upgrade",
+    participantId: "participant-fallback-upgrade",
+    classification: "formal",
+    allocationMethod: "client_fallback",
+    allocationStatus: "unreconciled",
+    fallbackReasonCode: "allocation_timeout",
+    fallbackReconciledAt: null
+  });
+  const confirmed = clone(unreconciled);
+  confirmed.session.allocation_status = "confirmed";
+  confirmed.session.fallback_reconciled_at =
+    "2026-07-27T02:00:30.000Z";
+
+  await writeFile(
+    inputPath,
+    buildNetlifyCsv([
+      submission(unreconciled, {
+        createdAt: "2026-07-27T02:00:00.000Z",
+        mirrorSource: "client_emergency"
+      }),
+      submission(confirmed, {
+        createdAt: "2026-07-27T02:01:00.000Z",
+        receiptId: "receipt-fallback-upgrade",
+        submissionAuthority: "netlify_database",
+        mirrorSource: "authority_queue"
+      })
+    ]),
+    "utf8"
+  );
+
+  const summary = await organizeNetlifyFormsExport({
+    inputPath,
+    outputPath
+  });
+
+  assert.equal(summary.classifications.formal.accepted_sessions, 1);
+  assert.equal(summary.classifications.formal.accepted_trials, 5);
+  assert.equal(summary.classifications.formal.exact_duplicate_rows, 0);
+  assert.equal(summary.classifications.formal.fallback_state_upgrade_rows, 1);
+  assert.equal(summary.conflict_sessions_excluded, 0);
+  assert.equal(summary.classifications.formal.conflict_rows, 0);
+
+  const participants = await readCsvRecords(
+    path.join(outputPath, "formal", "participants.csv")
+  );
+  assert.equal(participants.length, 1);
+  assert.equal(participants[0].allocation_status, "confirmed");
+  assert.equal(
+    participants[0].fallback_reconciled_at,
+    "2026-07-27T02:00:30.000Z"
+  );
+
+  const duplicates = await readCsvRecords(
+    path.join(outputPath, "formal", "duplicate-submissions.csv")
+  );
+  assert.equal(duplicates.length, 1);
+  assert.equal(duplicates[0].duplicate_reason, "fallback_state_upgrade");
+  assert.equal(duplicates[0].retained_source_row, "3");
+
+  const conflicts = await readCsvRecords(
+    path.join(outputPath, "formal", "submission-conflicts.csv")
+  );
+  assert.equal(conflicts.length, 0);
+});
+
+test("fallback state upgrades never hide changed trials or demographics", async () => {
+  const temporaryRoot = await mkdtemp(
+    path.join(os.tmpdir(), "mmq-netlify-fallback-conflicts-")
+  );
+  const inputPath = path.join(temporaryRoot, "netlify.csv");
+  const outputPath = path.join(temporaryRoot, "organized");
+
+  const trialOld = makePayload({
+    sessionId: "session-fallback-trial-conflict",
+    participantId: "participant-fallback-trial-conflict",
+    classification: "formal",
+    allocationMethod: "client_fallback",
+    allocationStatus: "unreconciled",
+    fallbackReasonCode: "allocation_timeout",
+    fallbackReconciledAt: null
+  });
+  const trialNew = clone(trialOld);
+  trialNew.session.allocation_status = "confirmed";
+  trialNew.session.fallback_reconciled_at =
+    "2026-07-27T03:00:30.000Z";
+  trialNew.trials[0].point += 1;
+
+  const demographicsOld = makePayload({
+    sessionId: "session-fallback-demographics-conflict",
+    participantId: "participant-fallback-demographics-conflict",
+    classification: "formal",
+    allocationMethod: "client_fallback",
+    allocationStatus: "unreconciled",
+    fallbackReasonCode: "allocation_timeout",
+    fallbackReconciledAt: null
+  });
+  const demographicsNew = clone(demographicsOld);
+  demographicsNew.session.allocation_status = "confirmed";
+  demographicsNew.session.fallback_reconciled_at =
+    "2026-07-27T03:01:30.000Z";
+  demographicsNew.demographics.age += 1;
+  for (const trial of demographicsNew.trials) {
+    trial.age += 1;
+  }
+
+  await writeFile(
+    inputPath,
+    buildNetlifyCsv([
+      submission(trialOld, {
+        createdAt: "2026-07-27T03:00:00.000Z",
+        mirrorSource: "client_emergency"
+      }),
+      submission(trialNew, {
+        createdAt: "2026-07-27T03:00:45.000Z",
+        receiptId: "receipt-fallback-trial-conflict",
+        submissionAuthority: "netlify_database",
+        mirrorSource: "authority_queue"
+      }),
+      submission(demographicsOld, {
+        createdAt: "2026-07-27T03:01:00.000Z",
+        mirrorSource: "client_emergency"
+      }),
+      submission(demographicsNew, {
+        createdAt: "2026-07-27T03:01:45.000Z",
+        receiptId: "receipt-fallback-demographics-conflict",
+        submissionAuthority: "netlify_database",
+        mirrorSource: "authority_queue"
+      })
+    ]),
+    "utf8"
+  );
+
+  const summary = await organizeNetlifyFormsExport({
+    inputPath,
+    outputPath
+  });
+
+  assert.equal(summary.classifications.formal.accepted_sessions, 0);
+  assert.equal(summary.classifications.formal.fallback_state_upgrade_rows, 0);
+  assert.equal(summary.conflict_sessions_excluded, 2);
+  assert.equal(summary.classifications.formal.conflict_rows, 4);
+
+  const conflicts = await readCsvRecords(
+    path.join(outputPath, "formal", "submission-conflicts.csv")
+  );
+  assert.equal(conflicts.length, 4);
+});
+
+test("legacy formal and test payloads are quarantined as pre-randomization/test", async () => {
+  const temporaryRoot = await mkdtemp(
+    path.join(os.tmpdir(), "mmq-netlify-legacy-")
+  );
+  const inputPath = path.join(temporaryRoot, "netlify.csv");
+  const outputPath = path.join(temporaryRoot, "organized");
+  const oldFormal = makeLegacyPayload({
+    sessionId: "session-old-formal",
+    participantId: "participant-old-formal",
+    classification: "formal"
+  });
+  const oldTest = makeLegacyPayload({
+    sessionId: "session-old-test",
+    participantId: "participant-old-test",
+    classification: "test"
+  });
+
+  await writeFile(
+    inputPath,
+    buildNetlifyCsv([submission(oldFormal), submission(oldTest)]),
+    "utf8"
+  );
+  const summary = await organizeNetlifyFormsExport({
+    inputPath,
+    outputPath
+  });
+
+  assert.equal(summary.classifications.formal.accepted_sessions, 0);
+  assert.equal(summary.classifications.test.accepted_sessions, 0);
+  assert.equal(
+    summary.classifications["pre-randomization-test"].accepted_sessions,
+    2
+  );
+  assert.equal(
+    summary.classifications["pre-randomization-test"].accepted_trials,
+    10
+  );
+
+  const quarantined = await readCsvRecords(
+    path.join(
+      outputPath,
+      "pre-randomization-test",
+      "participants.csv"
+    )
+  );
+  assert.deepEqual(
+    new Set(quarantined.map((row) => row.dataset_classification)),
+    new Set(["formal", "test"])
+  );
+  assert.ok(
+    quarantined.every(
+      (row) =>
+        row.export_classification === "pre-randomization-test" &&
+        row.allocation_method === ""
+    )
+  );
+});
+
+test("formal allocation audit separates variable-block and fallback sensitivity files", async () => {
+  const temporaryRoot = await mkdtemp(
+    path.join(os.tmpdir(), "mmq-netlify-randomization-")
+  );
+  const inputPath = path.join(temporaryRoot, "netlify.csv");
+  const outputPath = path.join(temporaryRoot, "organized");
+  const variableBlock = makePayload({
+    sessionId: "01-variable-block",
+    participantId: "participant-variable",
+    classification: "formal",
+    format: "table"
+  });
+  const fallbackReconciled = makePayload({
+    sessionId: "02-fallback-reconciled",
+    participantId: "participant-fallback-reconciled",
+    classification: "formal",
+    format: "graph",
+    allocationMethod: "client_fallback",
+    fallbackReasonCode: "allocation_server_error",
+    fallbackReconciledAt: "2026-07-27T02:05:00.000Z"
+  });
+  const fallbackUnreconciled = makePayload({
+    sessionId: "03-fallback-unreconciled",
+    participantId: "participant-fallback-unreconciled",
+    classification: "formal",
+    format: "video",
+    allocationMethod: "client_fallback",
+    allocationStatus: "unreconciled",
+    fallbackReasonCode: "allocation_timeout"
+  });
+
+  await writeFile(
+    inputPath,
+    buildNetlifyCsv(
+      [variableBlock, fallbackReconciled, fallbackUnreconciled].map((payload) =>
+        submission(payload)
+      )
+    ),
+    "utf8"
+  );
+  const summary = await organizeNetlifyFormsExport({
+    inputPath,
+    outputPath
+  });
+
+  assert.deepEqual(summary.randomization_audit, {
+    accepted_formal_sessions: 3,
+    variable_block_sessions: 1,
+    fallback_sessions: 2,
+    fallback_reconciled_sessions: 1,
+    fallback_unreconciled_sessions: 1,
+    fallback_rate: 2 / 3,
+    maximum_consecutive_fallback: 2,
+    pause_recommended: true,
+    all_formal_format_counts: { table: 1, graph: 1, video: 1 },
+    variable_block_only_format_counts: { table: 1, graph: 0, video: 0 },
+    fallback_format_counts: { table: 0, graph: 1, video: 1 },
+    interpretation:
+      "Counts cover accepted completed Forms submissions, not every assignment in the private allocation ledger."
+  });
+
+  const expectedFiles = [
+    ["variable-block-participants.csv", 1],
+    ["variable-block-trials.csv", 5],
+    ["fallback-reconciled-participants.csv", 1],
+    ["fallback-reconciled-trials.csv", 5],
+    ["fallback-unreconciled-participants.csv", 1],
+    ["fallback-unreconciled-trials.csv", 5]
+  ];
+  for (const [filename, expectedRows] of expectedFiles) {
+    const rows = await readCsvRecords(
+      path.join(outputPath, "formal", filename)
+    );
+    assert.equal(rows.length, expectedRows, filename);
+  }
+
+  const formalParticipants = await readCsvRecords(
+    path.join(outputPath, "formal", "participants.csv")
+  );
+  const formalTrials = await readCsvRecords(
+    path.join(outputPath, "formal", "trials.csv")
+  );
+  assert.equal(formalParticipants.length, 3);
+  assert.equal(formalTrials.length, 15);
+  assert.deepEqual(
+    new Set(formalTrials.map((row) => row.allocation_method)),
+    new Set(["variable_block", "client_fallback"])
+  );
+});
+
+test("post-cutover formal allocation metadata is strict and reconciled with Forms columns", () => {
+  const partial = makePayload({
+    sessionId: "session-partial-allocation",
+    participantId: "participant-partial",
+    classification: "formal"
+  });
+  delete partial.session.fallback_reconciled_at;
+
+  const invalidVersion = makePayload({
+    sessionId: "session-invalid-version",
+    participantId: "participant-invalid-version",
+    classification: "formal"
+  });
+  invalidVersion.session.randomization_version = "unexpected-version";
+
+  const mismatchedOuter = submission(
+    makePayload({
+      sessionId: "session-outer-mismatch",
+      participantId: "participant-outer-mismatch",
+      classification: "formal"
+    })
+  );
+  mismatchedOuter.allocationMethod = "client_fallback";
+
+  const invalidFallbackReason = makePayload({
+    sessionId: "session-invalid-fallback-reason",
+    participantId: "participant-invalid-fallback-reason",
+    classification: "formal",
+    allocationMethod: "client_fallback",
+    fallbackReasonCode: "unapproved_reason",
+    fallbackReconciledAt: "2026-07-27T02:05:00.000Z"
+  });
+
+  const unconfirmedVariableBlock = makePayload({
+    sessionId: "session-unconfirmed-variable-block",
+    participantId: "participant-unconfirmed-variable-block",
+    classification: "formal",
+    allocationStatus: "unreconciled"
+  });
+
+  const result = parseNetlifyRecords(
+    buildNetlifyCsv([
+      submission(partial),
+      submission(invalidVersion),
+      mismatchedOuter,
+      submission(invalidFallbackReason),
+      submission(unconfirmedVariableBlock)
+    ])
+  );
+
+  assert.equal(result.records.length, 0);
+  assert.deepEqual(
+    result.invalidSubmissions.map((row) => row.error_code),
+    [
+      "ALLOCATION_SCHEMA",
+      "CATALOG_FIELD_MISMATCH",
+      "ALLOCATION_FIELD_MISMATCH",
+      "SCHEMA_ENUM",
+      "CATALOG_FIELD_MISMATCH"
+    ]
+  );
+});
+
+test("a successful pre-submit reconcile may be timestamped after the frozen questionnaire payload", () => {
+  const reconciledAfterQuestionnaire = makePayload({
+    sessionId: "session-reconciled-after-questionnaire",
+    participantId: "participant-reconciled-after-questionnaire",
+    classification: "formal",
+    allocationMethod: "client_fallback",
+    fallbackReasonCode: "allocation_network_error",
+    fallbackReconciledAt: "2026-07-27T02:10:01.000Z"
+  });
+  const reconciledBeforeAssignment = makePayload({
+    sessionId: "session-reconciled-before-assignment",
+    participantId: "participant-reconciled-before-assignment",
+    classification: "formal",
+    allocationMethod: "client_fallback",
+    fallbackReasonCode: "allocation_network_error",
+    fallbackReconciledAt: "2026-07-27T01:59:49.000Z"
+  });
+
+  const result = parseNetlifyRecords(
+    buildNetlifyCsv([
+      submission(reconciledAfterQuestionnaire),
+      submission(reconciledBeforeAssignment)
+    ])
+  );
+
+  assert.equal(result.records.length, 1);
+  assert.equal(
+    result.records[0].sessionId,
+    "session-reconciled-after-questionnaire"
+  );
+  assert.equal(result.invalidSubmissions.length, 1);
+  assert.equal(
+    result.invalidSubmissions[0].error_code,
+    "ALLOCATION_TIME_WINDOW"
+  );
 });
 
 test("bad public rows are isolated while valid formal/test rows still export", async () => {
@@ -398,7 +810,7 @@ test("an all-empty data row is counted and isolated rather than silently dropped
     participantId: "participant-empty-row-check",
     classification: "test"
   });
-  const csv = `${buildNetlifyCsv([submission(valid)])}${",".repeat(13)}\r\n`;
+  const csv = `${buildNetlifyCsv([submission(valid)])}${",".repeat(23)}\r\n`;
   const result = parseNetlifyRecords(csv);
 
   assert.equal(result.records.length, 1);
@@ -489,7 +901,11 @@ function makePayload({
   participantId,
   classification,
   point = 10,
-  format = "graph"
+  format = "graph",
+  allocationMethod = "variable_block",
+  allocationStatus = "confirmed",
+  fallbackReasonCode = null,
+  fallbackReconciledAt = null
 }) {
   const submittedAt = "2026-07-27T02:10:00.000Z";
   const demographics = {
@@ -504,6 +920,27 @@ function makePayload({
   };
   const selectedSequences = selectFixtureSequences();
 
+  const allocation =
+    classification === "formal"
+      ? {
+          allocation_id: `allocation-${sessionId}`,
+          randomization_version: "mmq-randomization-2026-07-v1",
+          allocation_method: allocationMethod,
+          allocation_status: allocationStatus,
+          assigned_at: "2026-07-27T01:59:50.000Z",
+          fallback_reason_code: fallbackReasonCode,
+          fallback_reconciled_at: fallbackReconciledAt
+        }
+      : {
+          allocation_id: null,
+          randomization_version: null,
+          allocation_method: null,
+          allocation_status: null,
+          assigned_at: null,
+          fallback_reason_code: null,
+          fallback_reconciled_at: null
+        };
+
   return {
     session: {
       session_id: sessionId,
@@ -515,7 +952,8 @@ function makePayload({
       formal_collection_allowed: classification === "formal",
       started_at: "2026-07-27T02:00:00.000Z",
       submitted_at: submittedAt,
-      duration_ms: 600000
+      duration_ms: 600000,
+      ...allocation
     },
     trials: selectedSequences.map((sequence, index) =>
       makeTrial({
@@ -531,6 +969,22 @@ function makePayload({
     ),
     demographics
   };
+}
+
+function makeLegacyPayload(options) {
+  const payload = makePayload(options);
+  for (const field of [
+    "allocation_id",
+    "randomization_version",
+    "allocation_method",
+    "allocation_status",
+    "assigned_at",
+    "fallback_reason_code",
+    "fallback_reconciled_at"
+  ]) {
+    delete payload.session[field];
+  }
+  return payload;
 }
 
 function selectFixtureSequences() {
@@ -647,7 +1101,10 @@ function submission(
     createdAt = "2026-07-27 10:00",
     attempt = "1",
     latency = "",
-    scope = "previous_completed_attempt"
+    scope = "previous_completed_attempt",
+    receiptId = "",
+    submissionAuthority = "",
+    mirrorSource = ""
   } = {}
 ) {
   const payloadJson = JSON.stringify(payload, null, pretty ? 2 : 0);
@@ -659,12 +1116,22 @@ function submission(
     stimulusSetVersion: payload.session.stimulus_set_version,
     catalogHash: payload.session.catalog_hash,
     submittedAt: payload.session.submitted_at,
+    allocationId: payload.session.allocation_id,
+    randomizationVersion: payload.session.randomization_version,
+    allocationMethod: payload.session.allocation_method,
+    allocationStatus: payload.session.allocation_status,
+    assignedAt: payload.session.assigned_at,
+    fallbackReasonCode: payload.session.fallback_reason_code,
+    fallbackReconciledAt: payload.session.fallback_reconciled_at,
     payloadSha256: hash(payloadJson),
     payloadJson,
     createdAt,
     attempt,
     latency,
-    scope
+    scope,
+    receiptId,
+    submissionAuthority,
+    mirrorSource
   };
 }
 
@@ -679,9 +1146,19 @@ function buildNetlifyCsv(records) {
     "catalog_hash",
     "submitted_at",
     "payload_sha256",
+    "allocation_id",
+    "randomization_version",
+    "allocation_method",
+    "allocation_status",
+    "assigned_at",
+    "fallback_reason_code",
+    "fallback_reconciled_at",
     "submit_attempt_count",
     "submit_latency_ms",
     "submit_latency_scope",
+    "receipt_id",
+    "submission_authority",
+    "mirror_source",
     "submission_note",
     "payload_json"
   ];
@@ -695,9 +1172,19 @@ function buildNetlifyCsv(records) {
     record.catalogHash,
     record.submittedAt,
     record.payloadSha256,
+    record.allocationId,
+    record.randomizationVersion,
+    record.allocationMethod,
+    record.allocationStatus,
+    record.assignedAt,
+    record.fallbackReasonCode,
+    record.fallbackReconciledAt,
     record.attempt,
     record.latency,
     record.scope,
+    record.receiptId,
+    record.submissionAuthority,
+    record.mirrorSource,
     '表单备注, 包含"引号"\n与换行',
     record.payloadJson
   ]);

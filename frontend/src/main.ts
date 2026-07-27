@@ -4,7 +4,14 @@ import type {
   ExperimentPayload,
   ExperimentTrial
 } from "./experiment/buildExperiment";
-import { apiBootstrap, apiSubmit, type BootstrapResponse } from "./api/client";
+import {
+  allocationMetadataFromBootstrap,
+  apiBootstrap,
+  apiSubmit,
+  loadRecoverablePendingSubmission,
+  type SubmissionResult,
+  type BootstrapResponse
+} from "./api/client";
 import {
   INSTRUCTIONS_COPY,
   LANDING_COPY
@@ -30,8 +37,34 @@ if (!app) {
   throw new Error("App root #app not found.");
 }
 
-renderLandingPage(app);
 renderRegulatoryFooter();
+void initializeParticipantApp(app);
+
+async function initializeParticipantApp(
+  root: HTMLDivElement
+): Promise<void> {
+  try {
+    const pending = await loadRecoverablePendingSubmission();
+    if (pending) {
+      const submit = () =>
+        apiSubmit(
+          pending.sessionId,
+          pending.participantId,
+          pending.payload
+        );
+      renderSubmittingPage(root, true);
+      await submitAndRenderCompletion(
+        root,
+        pending.payload,
+        submit
+      );
+      return;
+    }
+  } catch {
+    // A damaged local recovery record must not block a new questionnaire.
+  }
+  renderLandingPage(root);
+}
 
 function renderLandingPage(root: HTMLDivElement): void {
   root.innerHTML = `
@@ -153,7 +186,7 @@ function renderConsentPage(root: HTMLDivElement): void {
   
   startButton?.addEventListener("click", () => {
     startButton.disabled = true;
-    startButton.textContent = "正在连接服务器…";
+    startButton.textContent = "正在准备题目…";
 
     Promise.all([
       apiBootstrap(
@@ -184,6 +217,7 @@ function renderConsentPage(root: HTMLDivElement): void {
           sessionId: bootstrap.session_id,
           datasetClassification: formalCollectionAllowed ? "formal" : "test",
           formalCollectionAllowed,
+          allocationMetadata: allocationMetadataFromBootstrap(bootstrap),
           onComplete: (payload) => {
             const submit = () =>
               apiSubmit(
@@ -191,7 +225,7 @@ function renderConsentPage(root: HTMLDivElement): void {
                 bootstrap.participant_id,
                 payload
               );
-            renderSubmittingPage(root);
+            renderSubmittingPage(root, false);
             void submitAndRenderCompletion(root, payload, submit);
           }
         });
@@ -201,20 +235,23 @@ function renderConsentPage(root: HTMLDivElement): void {
         console.error("Bootstrap failed:", err);
         startButton.disabled = false;
         startButton.textContent = "开始答题";
-        alert("无法连接到服务器，请确保后端已启动后重试。");
+        alert("当前暂时无法开始答题，请稍后重试。");
       });
   });
 }
 
-type SubmitRequest = () => Promise<unknown>;
+type SubmitRequest = () => Promise<SubmissionResult>;
 
-function renderSubmittingPage(root: HTMLDivElement): void {
+function renderSubmittingPage(
+  root: HTMLDivElement,
+  isRecovery: boolean
+): void {
   root.innerHTML = `
     <main class="shell shell--success">
       <section class="card submission-status" role="status" aria-live="polite">
-        <p class="eyebrow">正在提交</p>
-        <h1>正在保存您的作答</h1>
-        <p class="lead">请保持此页面打开，提交完成后页面会自动更新。</p>
+        <p class="eyebrow">${isRecovery ? "正在恢复提交" : "正在提交"}</p>
+        <h1>${isRecovery ? "正在确认上次作答" : "正在保存您的作答"}</h1>
+        <p class="lead">请保持此页面打开。只有研究服务器返回完成编号后，页面才会显示“已保存”。</p>
       </section>
     </main>
   `;
@@ -254,7 +291,7 @@ function renderCompletionPage(
     }
 
     const nextStatus = await resolveSubmissionState(submit);
-    if (nextStatus === "success") {
+    if (nextStatus.state !== "unconfirmed") {
       renderCompletionPage(root, payload, nextStatus, submit);
       return;
     }

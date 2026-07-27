@@ -17,7 +17,9 @@ CSV 整理为可核查的参与者表和逐题表。该工具只在本地读取�
 
 4. 查看命令行摘要及输出目录中的 `export-summary.json`。
 
-输出按照 `dataset_classification` 分开：
+输出按照收数阶段和 `dataset_classification` 分开。缺少完整随机化元数据的
+历史记录无论原值为 `formal` 还是 `test`，都只进入
+`pre-randomization-test/`，不会混入新正式数据：
 
 ```text
 整理结果/
@@ -26,17 +28,27 @@ CSV 整理为可核查的参与者表和逐题表。该工具只在本地读取�
 ├─ formal/
 │  ├─ participants.csv
 │  ├─ trials.csv
+│  ├─ variable-block-participants.csv
+│  ├─ variable-block-trials.csv
+│  ├─ fallback-reconciled-participants.csv
+│  ├─ fallback-reconciled-trials.csv
+│  ├─ fallback-unreconciled-participants.csv
+│  ├─ fallback-unreconciled-trials.csv
 │  ├─ duplicate-submissions.csv
 │  └─ submission-conflicts.csv
-└─ test/
-   ├─ participants.csv
-   ├─ trials.csv
-   ├─ duplicate-submissions.csv
-   └─ submission-conflicts.csv
+├─ test/
+   └─ （与 formal/ 相同的文件结构）
+└─ pre-randomization-test/
+   └─ （与 formal/ 相同的文件结构）
 ```
 
 - `participants.csv`：每个通过校验的会话一行，包含会话、背景问卷及提交性能字段。
 - `trials.csv`：每个通过校验的会话恰好五行，保留全部逐题字段。
+- `variable-block-*.csv`：仅保留正常服务端可变区组分配，可直接用于
+  “排除全部本地应急随机”的敏感性分析。
+- `fallback-reconciled-*.csv`：本地应急随机后已成功登记的会话。
+- `fallback-unreconciled-*.csv`：提交时仍未登记的本地应急会话，应逐批
+  对照随机化账本核查。
 - `duplicate-submissions.csv`：相同 `session_id + payload_sha256` 的重试记录。
 - `submission-conflicts.csv`：同一 `session_id` 对应多个不同
   `payload_sha256` 的全部版本，并保留原始 `payload_json` 供人工核查。
@@ -49,7 +61,15 @@ CSV 整理为可核查的参与者表和逐题表。该工具只在本地读取�
 - 相同会话、相同哈希：首条记录进入正式整理表，后续记录列入重复清单。
 - 相同会话、不同哈希：该会话的所有版本列入冲突清单，全部暂不进入
   `participants.csv` 和 `trials.csv`，避免程序擅自选择一个答案版本。
-- `formal` 和 `test` 始终分目录输出，不能混合。
+- `formal`、`test` 和 `pre-randomization-test` 始终分目录输出，不能混合。
+- 新正式记录必须在 Forms 平面字段及 `payload_json.session` 中同时具有：
+  `allocation_id`、`randomization_version`、`allocation_method`、
+  `allocation_status`、`assigned_at`、`fallback_reason_code` 和
+  `fallback_reconciled_at`。两处值不一致即视为无效。
+- `variable_block` 必须为 `confirmed`，且两个 fallback 字段均为空。
+  `client_fallback` 必须记录 `allocation_timeout`、
+  `allocation_network_error` 或 `allocation_server_error`；已登记时状态为
+  `confirmed` 并带登记时间，未登记时状态为 `unreconciled` 且登记时间为空。
 - 输入中的 `payload_sha256` 会与 `payload_json` 重新计算的 SHA-256 核对；
   缺失或不匹配均视为无效提交。
 
@@ -68,6 +88,11 @@ CSV 整理为可核查的参与者表和逐题表。该工具只在本地读取�
 列数或引号结构整体损坏时则停止整批处理。输出CSV会中和以
 `= + - @`、Tab或换行开头的字符串，避免电子表格公式执行；真实负数仍按
 数值输出。
+
+`export-summary.json` 还会报告正常区组、应急已登记、应急未登记、三种格式
+人数、应急比例和最长连续应急次数。当应急比例超过1%或连续达到3次时，
+`pause_recommended` 为 `true`。这些数字只基于已经进入Forms的有效完成记录，
+不能替代私有数据库中的全部已分配人数账本。
 
 ## 覆盖已有结果
 
@@ -92,5 +117,6 @@ npm run test:netlify-export
 ```
 
 测试使用冻结catalog中的真实Table、Graph和Video呈现，覆盖多行CSV、五题
-展开、正式/测试分离、重复与冲突、无效行隔离、Pool 2 fast映射、公式注入
-防护、空记录、原子覆盖和符号链接防护。
+展开、正式/测试/历史阶段分离、完整随机化字段、正常区组与两类应急输出、
+重复与冲突、无效行隔离、Pool 2 fast映射、公式注入防护、空记录、原子覆盖
+和符号链接防护。

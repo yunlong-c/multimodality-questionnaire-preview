@@ -1,15 +1,24 @@
 # Netlify's production branch is selected while linking the repository.
 # Select `main`; these settings then apply to production and preview builds.
 [build]
-  command = "npm --workspace multimodality-frontend run build"
+  command = "npm run netlify:migrate && npm --workspace multimodality-frontend run build"
   publish = "frontend/dist"
 
 [build.environment]
   NODE_VERSION = "22"
   VITE_STATIC_PREVIEW = "true"
+  VITE_AUTHORITATIVE_SUBMISSION = "true"
   VITE_DEFAULT_DATASET_CLASSIFICATION = "formal"
   MMQ_EXTERNAL_ASSETS = "false"
-  MMQ_EXCLUDE_ADMIN = "true"
+
+# Unpublished deploys are always research-test environments. Netlify Database
+# gives each Deploy Preview its own branch, and the participant UI additionally
+# bypasses formal allocation unless the production context is active.
+[context.deploy-preview.environment]
+  VITE_DEFAULT_DATASET_CLASSIFICATION = "test"
+
+[context.branch-deploy.environment]
+  VITE_DEFAULT_DATASET_CLASSIFICATION = "test"
 
 # Netlify Forms needs the normal post-deploy form scan. Research images remain
 # byte-for-byte static: keep deploy processing enabled for Forms detection, but

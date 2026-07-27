@@ -10,11 +10,15 @@ export type {
 } from "../data/manifestTypes";
 export {
   trialCsvHeaders,
+  type AllocationMetadata,
+  type AllocationMethod,
+  type AllocationStatus,
   type DatasetClassification,
   type ExperimentDemographics,
   type ExperimentPayload,
   type ExperimentSession,
-  type ExperimentTrial
+  type ExperimentTrial,
+  type FallbackReasonCode
 } from "./experimentTypes";
 export { buildTrialHtml } from "./trialRendering";
 

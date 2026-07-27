@@ -6,6 +6,23 @@ import type {
 } from "../data/manifestTypes";
 
 export type DatasetClassification = "formal" | "test";
+export type AllocationMethod = "variable_block" | "client_fallback";
+export type AllocationStatus = "confirmed" | "unreconciled";
+export type FallbackReasonCode =
+  | "allocation_timeout"
+  | "allocation_network_error"
+  | "allocation_server_error";
+
+export interface AllocationMetadata {
+  allocation_id: string | null;
+  randomization_version: string | null;
+  allocation_method: AllocationMethod | null;
+  allocation_status: AllocationStatus | null;
+  assigned_at: string | null;
+  fallback_reason_code: FallbackReasonCode | null;
+  fallback_reconciled_at: string | null;
+}
+
 export type AssetLoadStatus =
   | "not_applicable"
   | "pending"
@@ -19,10 +36,11 @@ export interface StartExperimentOptions {
   sessionId: string;
   datasetClassification: DatasetClassification;
   formalCollectionAllowed: boolean;
+  allocationMetadata: AllocationMetadata;
   onComplete: (payload: ExperimentPayload) => void;
 }
 
-export interface ExperimentSession {
+export interface ExperimentSession extends AllocationMetadata {
   session_id: string;
   participant_id: string;
   format_assignment: StimulusFormat;
