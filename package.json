@@ -15,7 +15,8 @@
     "randomization:generate": "node scripts/randomization/generate-private-schedule.mjs",
     "randomization:validate": "node scripts/randomization/validate-private-schedule.mjs",
     "randomization:import": "node scripts/randomization/import-private-schedule.mjs",
-    "randomization:export-ledger": "node scripts/randomization/export-randomization-ledger.mjs"
+    "randomization:export-ledger": "node scripts/randomization/export-randomization-ledger.mjs",
+    "randomization:verify-preview": "node scripts/randomization/verify-preview-concurrency.mjs"
   },
   "devDependencies": {
     "@netlify/functions": "^5.3.0",

@@ -12,6 +12,21 @@
   `raw.githubusercontent.com` 请求。
 - GitHub Pages 的 `gh-pages` 分支与原腾讯云 v2 工程不受此部署影响。
 
+## 环境变量隔离
+
+Netlify Free 计划不能把变量进一步限制为仅 Functions 可见，因此必须使用
+不同 deploy context 的值，并确保任何服务端变量都不带 `VITE_` 前缀：
+
+| 变量 | Production | Deploy Preview / branch deploy |
+|---|---|---|
+| `MMQ_RANDOMIZATION_HMAC_SECRET` | 独立、稳定的正式密钥 | 独立且可轮换的测试密钥，或不设置 |
+| `MMQ_FORMAL_COLLECTION_OPEN` | 准备期 `false`；收数期 `true` | 默认 `false` |
+| `VITE_DEFAULT_DATASET_CLASSIFICATION` | `formal` | `test` |
+| `NETLIFY_DB_URL` | 由Netlify提供生产库 | 由Netlify提供隔离分支库 |
+
+不得让未审核的外部 Pull Request 读取敏感环境变量。预览页面标记为 `test`
+并不等于预览 Function 已关闭；两者必须分别核查。
+
 ## 正式随机化启用门槛
 
 生产普通入口只有同时满足以下条件才可发放：
@@ -25,6 +40,25 @@
 
 任一条件未满足时不得把普通根链接发给参与者。随机表缺失、关闭、耗尽或
 版本不匹配会停止进入问卷，不会触发本地应急随机。
+
+### 打开正式收数
+
+1. 在 Production context 将 `MMQ_FORMAL_COLLECTION_OPEN` 设为 `true`；
+2. 触发一次新的 production deploy，并等待状态变为 Ready；
+3. 使用新的正式入口请求 `/api/allocate`，确认不再返回
+   `423 COLLECTION_CLOSED`；
+4. 复核响应中的随机化版本、catalog hash及分配方法后，才发放链接。
+
+环境变量变更不会自动更新已经部署的 Function；遗漏重新部署会使旧门闸值
+继续生效。
+
+### 关闭正式收数
+
+1. 在 Production context 将 `MMQ_FORMAL_COLLECTION_OPEN` 设为 `false`；
+2. 触发一次新的 production deploy，并等待状态变为 Ready；
+3. 确认 `/api/allocate` 和 `/api/allocate/reconcile` 均返回
+   `423 COLLECTION_CLOSED`；
+4. 完成上述验证后，才关闭数据库中的随机表。
 
 ## 团队固定格式测试
 

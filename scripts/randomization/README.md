@@ -41,14 +41,24 @@ expand/migrate/contract release and must not be added casually to this step.
 
 To start formal collection, set `MMQ_FORMAL_COLLECTION_OPEN=true` in the
 Netlify Functions environment only after the migration, schedule activation,
-and release checks pass. A missing value, `false`, `TRUE`, or any other value
-returns `423 COLLECTION_CLOSED` without opening a database connection.
+and release checks pass. Trigger a new production deploy, wait for it to become
+Ready, and verify `/api/allocate` no longer returns `423 COLLECTION_CLOSED`
+before distributing the link. A missing value, `false`, `TRUE`, or any other
+value returns `423 COLLECTION_CLOSED` without opening a database connection.
 
-To end collection, first set `MMQ_FORMAL_COLLECTION_OPEN=false` and verify that
-both allocation endpoints return `423 COLLECTION_CLOSED`. Only then close the
-database schedule. This external gate keeps an intentional shutdown
-distinguishable from a database outage and prevents the client from treating
-closure as a reason for emergency randomization.
+On Netlify's Free plan, granular Functions-only scopes are unavailable. Limit
+these variables to the intended deploy context, keep both names free of the
+`VITE_` prefix, and redeploy after every change. This keeps the values out of
+the browser bundle even though Netlify applies them to all scopes in that
+context.
+
+To end collection, first set `MMQ_FORMAL_COLLECTION_OPEN=false`, trigger a new
+production deploy, wait for it to become Ready, and verify that both allocation
+endpoints return `423 COLLECTION_CLOSED`. Only then close the database
+schedule. Environment changes do not update an already deployed Function. This
+external gate keeps an intentional shutdown distinguishable from a database
+outage and prevents the client from treating closure as a reason for emergency
+randomization.
 
 ## Batch audit and restricted backup
 
@@ -76,6 +86,12 @@ Emergency-randomization review is required when its effective proportion
 exceeds 1%, or when three emergency allocations occur consecutively. A current
 participant may finish, but the next distribution batch should pause.
 
+The current page may finish if a browser refuses local-storage writes, but a
+refresh can then create a new browser token and assignment. Treat this as the
+same residual duplicate risk as cleared storage, private browsing, or a device
+change, and review it through the restricted ledger rather than assuming that
+browser identity is infallible.
+
 ## Development and verification
 
 `npm run test:randomization` checks schedule construction, concealment of the
@@ -83,3 +99,15 @@ public metadata, API/error contracts, fallback reconciliation, ledger
 summaries, and the required transaction/advisory-lock SQL. A real isolated
 Netlify Database branch is still required for the final 100-request concurrency
 test; unit tests do not substitute for that deployment check.
+
+The destructive preview verifier refuses production URLs and requires an
+explicit acknowledgement because it consumes real positions in the isolated
+preview ledger:
+
+```text
+npm run randomization:verify-preview -- \
+  --base-url https://deploy-preview-N--site-name.netlify.app \
+  --same-token 100 \
+  --unique-tokens 100 \
+  --confirm-consumes-preview-slots
+```
