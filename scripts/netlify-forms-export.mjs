@@ -2,6 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 import {
   mkdir,
   lstat,
@@ -168,6 +169,7 @@ const TRIAL_PRIORITY_HEADERS = [
 ];
 
 const DUPLICATE_HEADERS = [
+  "duplicate_reason",
   "source_row",
   "retained_source_row",
   "session_id",
@@ -357,6 +359,7 @@ export async function organizeNetlifyFormsExport({
     accepted_sessions: analysis.acceptedSessions,
     accepted_trials: analysis.acceptedTrials,
     exact_duplicate_rows: analysis.exactDuplicateRows,
+    fallback_state_upgrade_rows: analysis.fallbackStateUpgradeRows,
     conflict_sessions_excluded: analysis.conflictSessionsExcluded,
     conflict_rows: analysis.conflictRows,
     classifications: Object.fromEntries(
@@ -367,7 +370,12 @@ export async function organizeNetlifyFormsExport({
           {
             accepted_sessions: result.participants.length,
             accepted_trials: result.trials.length,
-            exact_duplicate_rows: result.duplicates.length,
+            exact_duplicate_rows: result.duplicates.filter(
+              (row) => row.duplicate_reason === "exact_hash_duplicate"
+            ).length,
+            fallback_state_upgrade_rows: result.duplicates.filter(
+              (row) => row.duplicate_reason === "fallback_state_upgrade"
+            ).length,
             conflict_rows: result.conflicts.length
           }
         ];
@@ -381,7 +389,9 @@ export async function organizeNetlifyFormsExport({
       frozen_catalog_hash: frozenCatalogHash,
       deduplication_key: "session_id + payload_sha256",
       conflicting_sessions:
-        "All versions of a session with more than one payload hash are excluded from participants.csv and trials.csv.",
+        "Multiple hashes are conflicts unless they differ only by a validated client_fallback transition from unreconciled to confirmed.",
+      fallback_state_upgrade:
+        "When only allocation_status and fallback_reconciled_at change during fallback reconciliation, the confirmed record is retained and the unreconciled Forms backup is audited as a state upgrade.",
       dataset_separation:
         "formal/, test/ and pre-randomization-test/ output directories",
       pre_randomization_policy:
@@ -728,40 +738,61 @@ export function analyzeRecords(records) {
   let acceptedSessions = 0;
   let acceptedTrials = 0;
   let exactDuplicateRows = 0;
+  let fallbackStateUpgradeRows = 0;
   let conflictSessionsExcluded = 0;
   let conflictRows = 0;
 
   for (const sessionRecords of bySession.values()) {
     sessionRecords.sort((left, right) => left.sourceRow - right.sourceRow);
     const recordsByHash = groupBy(sessionRecords, (record) => record.payloadSha256);
+    const retainedByHash = [];
 
     for (const sameHashRecords of recordsByHash.values()) {
-      const retained = sameHashRecords[0];
-      for (const duplicate of sameHashRecords.slice(1)) {
+      const retained = preferredSubmissionRecord(sameHashRecords);
+      retainedByHash.push(retained);
+      for (const duplicate of sameHashRecords) {
+        if (duplicate === retained) continue;
         exactDuplicateRows += 1;
         byClassification[duplicate.classification].duplicates.push(
-          duplicateRow(duplicate, retained)
+          duplicateRow(duplicate, retained, "exact_hash_duplicate")
         );
       }
     }
 
     if (recordsByHash.size > 1) {
-      conflictSessionsExcluded += 1;
-      conflictRows += sessionRecords.length;
-      const hashes = [...recordsByHash.keys()].sort();
-      const classifications = [
-        ...new Set(sessionRecords.map((record) => record.payloadClassification))
-      ].sort();
+      const upgraded = fallbackStateUpgradeRecord(retainedByHash);
+      if (upgraded) {
+        for (const superseded of retainedByHash) {
+          if (superseded === upgraded) continue;
+          fallbackStateUpgradeRows += 1;
+          byClassification[superseded.classification].duplicates.push(
+            duplicateRow(
+              superseded,
+              upgraded,
+              "fallback_state_upgrade"
+            )
+          );
+        }
+      } else {
+        conflictSessionsExcluded += 1;
+        conflictRows += sessionRecords.length;
+        const hashes = [...recordsByHash.keys()].sort();
+        const classifications = [
+          ...new Set(sessionRecords.map((record) => record.payloadClassification))
+        ].sort();
 
-      for (const record of sessionRecords) {
-        byClassification[record.classification].conflicts.push(
-          conflictRow(record, hashes, classifications)
-        );
+        for (const record of sessionRecords) {
+          byClassification[record.classification].conflicts.push(
+            conflictRow(record, hashes, classifications)
+          );
+        }
+        continue;
       }
-      continue;
     }
 
-    const retained = sessionRecords[0];
+    const retained =
+      fallbackStateUpgradeRecord(retainedByHash)
+      ?? retainedByHash[0];
     const result = byClassification[retained.classification];
     result.participants.push(participantRow(retained));
     for (const trial of retained.payload.trials) {
@@ -788,6 +819,7 @@ export function analyzeRecords(records) {
     acceptedSessions,
     acceptedTrials,
     exactDuplicateRows,
+    fallbackStateUpgradeRows,
     conflictSessionsExcluded,
     conflictRows
   };
@@ -899,8 +931,13 @@ function countFormats(rows) {
   );
 }
 
-function duplicateRow(record, retained) {
+function duplicateRow(
+  record,
+  retained,
+  reason = "exact_hash_duplicate"
+) {
   return {
+    duplicate_reason: reason,
     source_row: record.sourceRow,
     retained_source_row: retained.sourceRow,
     session_id: record.sessionId,
@@ -920,6 +957,65 @@ function duplicateRow(record, retained) {
     retained_submit_latency_scope:
       retained.formRow.submit_latency_scope ?? ""
   };
+}
+
+function preferredSubmissionRecord(records) {
+  return [...records].sort((left, right) => {
+    const authorityDifference =
+      submissionAuthorityPriority(right)
+      - submissionAuthorityPriority(left);
+    return authorityDifference || left.sourceRow - right.sourceRow;
+  })[0];
+}
+
+function submissionAuthorityPriority(record) {
+  if (
+    record.formRow.submission_authority === "netlify_database"
+    || record.formRow.mirror_source === "authority_queue"
+    || boundedAuditValue(record.formRow.receipt_id)
+  ) {
+    return 2;
+  }
+  if (record.formRow.mirror_source === "client_emergency") {
+    return 1;
+  }
+  return 0;
+}
+
+function fallbackStateUpgradeRecord(records) {
+  if (records.length !== 2) return null;
+  const unreconciled = records.find(
+    (record) =>
+      record.allocationSchema === "current"
+      && record.payloadClassification === "formal"
+      && record.payload.session.allocation_method === "client_fallback"
+      && record.payload.session.allocation_status === "unreconciled"
+      && record.payload.session.fallback_reconciled_at === null
+  );
+  const confirmed = records.find(
+    (record) =>
+      record.allocationSchema === "current"
+      && record.payloadClassification === "formal"
+      && record.payload.session.allocation_method === "client_fallback"
+      && record.payload.session.allocation_status === "confirmed"
+      && typeof record.payload.session.fallback_reconciled_at === "string"
+  );
+  if (!unreconciled || !confirmed) return null;
+
+  const normalize = (record) => ({
+    ...record.payload,
+    session: {
+      ...record.payload.session,
+      allocation_status: "__fallback_state__",
+      fallback_reconciled_at: "__fallback_state__"
+    }
+  });
+  return isDeepStrictEqual(
+    normalize(unreconciled),
+    normalize(confirmed)
+  )
+    ? confirmed
+    : null;
 }
 
 function conflictRow(record, hashes, classifications) {
@@ -2157,6 +2253,7 @@ async function main() {
       `Accepted sessions: ${summary.accepted_sessions}`,
       `Accepted trials: ${summary.accepted_trials}`,
       `Exact duplicate rows: ${summary.exact_duplicate_rows}`,
+      `Fallback state-upgrade rows: ${summary.fallback_state_upgrade_rows}`,
       `Conflict sessions excluded: ${summary.conflict_sessions_excluded}`,
       `Conflict rows: ${summary.conflict_rows}`,
       `Formal: ${summary.classifications.formal.accepted_sessions} sessions / ${summary.classifications.formal.accepted_trials} trials`,

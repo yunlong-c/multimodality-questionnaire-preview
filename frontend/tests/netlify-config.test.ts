@@ -33,6 +33,10 @@ test("Netlify builds the static questionnaire from the repository root", () => {
   assert.match(netlifyConfig, /VITE_STATIC_PREVIEW = "true"/);
   assert.match(
     netlifyConfig,
+    /VITE_AUTHORITATIVE_SUBMISSION = "true"/
+  );
+  assert.match(
+    netlifyConfig,
     /VITE_DEFAULT_DATASET_CLASSIFICATION = "formal"/
   );
   assert.equal(
@@ -84,8 +88,8 @@ test("Netlify serves the frozen assets locally without rewriting them", () => {
   );
 });
 
-test("the public Netlify build omits the unsupported admin entry", () => {
-  assert.equal(shouldExcludeAdminPage({ NETLIFY: "true" }), true);
+test("the Netlify build includes the protected admin entry", () => {
+  assert.equal(shouldExcludeAdminPage({ NETLIFY: "true" }), false);
   assert.equal(
     shouldExcludeAdminPage({ MMQ_EXCLUDE_ADMIN: "true" }),
     true
@@ -97,7 +101,7 @@ test("the public Netlify build omits the unsupported admin entry", () => {
     Object.keys(createHtmlInputs(false)).sort(),
     ["admin", "questionnaire"]
   );
-  assert.match(netlifyConfig, /MMQ_EXCLUDE_ADMIN = "true"/);
+  assert.doesNotMatch(netlifyConfig, /MMQ_EXCLUDE_ADMIN\s*=/);
 });
 
 test("all required public catalog runtime files are tracked without private outcomes", () => {

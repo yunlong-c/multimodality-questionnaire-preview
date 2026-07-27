@@ -73,9 +73,12 @@ test("API entrypoints are POST-only and use non-overlapping paths", async () => 
   assert.match(reconcile, /path: "\/api\/allocate\/reconcile"/);
   assert.match(allocate, /method: "POST"/);
   assert.match(reconcile, /method: "POST"/);
-  for (const entrypoint of [allocate, reconcile]) {
-    assert.match(entrypoint, /aggregateBy: \["domain", "ip"\]/);
-    assert.match(entrypoint, /windowSize: 60/);
-    assert.match(entrypoint, /windowLimit: 300/);
-  }
+  assert.match(allocate, /aggregateBy: \["domain", "ip"\]/);
+  assert.match(allocate, /windowSize: 60/);
+  assert.match(allocate, /windowLimit: 300/);
+
+  // Netlify Free permits two code-based rate-limit rules per project.
+  // Preserve those slots for the high-volume public allocate and submit
+  // endpoints; fallback reconciliation remains guarded by strict validation.
+  assert.doesNotMatch(reconcile, /rateLimit/);
 });

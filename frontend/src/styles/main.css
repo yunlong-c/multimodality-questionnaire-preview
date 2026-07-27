@@ -121,7 +121,7 @@ summary:focus-visible,
 
 .card {
   width: min(860px, 100%);
-  padding: clamp(30px, 5vw, 52px);
+  padding: clamp(28px, 4.4vw, 46px);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-card);
   background: var(--color-surface);
@@ -130,6 +130,8 @@ summary:focus-visible,
 
 .card--experiment {
   width: min(920px, 100%);
+  padding-block: clamp(26px, 4vw, 44px);
+  padding-inline: clamp(30px, 5vw, 52px);
 }
 
 .card h1,
@@ -147,14 +149,14 @@ summary:focus-visible,
 }
 
 .card h1 {
-  margin-bottom: 18px;
-  font-size: clamp(2rem, 4vw, 2.6rem);
+  margin-bottom: 16px;
+  font-size: clamp(1.9rem, 3.7vw, 2.35rem);
   line-height: 1.2;
   letter-spacing: -0.025em;
 }
 
 .card h2 {
-  font-size: clamp(1.7rem, 3vw, 2rem);
+  font-size: clamp(1.62rem, 2.8vw, 1.9rem);
   line-height: 1.28;
   letter-spacing: -0.018em;
 }
@@ -189,7 +191,7 @@ summary:focus-visible,
   display: flex;
   flex-wrap: wrap;
   gap: 8px 18px;
-  margin-top: 26px;
+  margin-top: 22px;
   color: #4a5c70;
   font-size: 0.94rem;
 }
@@ -211,7 +213,7 @@ summary:focus-visible,
 }
 
 .page-actions {
-  margin-top: 30px;
+  margin-top: 26px;
 }
 
 .page-actions--split {
@@ -293,7 +295,7 @@ summary:focus-visible,
 }
 
 .consent-box {
-  margin-top: 24px;
+  margin-top: 20px;
   border-block: 1px solid var(--color-border);
   padding: 10px 0 0;
 }
@@ -349,7 +351,7 @@ summary:focus-visible,
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  margin: 26px 0;
+  margin: 22px 0;
 }
 
 .summary-item {
@@ -364,6 +366,18 @@ summary:focus-visible,
   margin-bottom: 4px;
   color: var(--color-muted);
   font-size: 0.84rem;
+}
+
+.summary-item--receipt {
+  grid-column: 1 / -1;
+}
+
+.receipt-id {
+  display: block;
+  overflow-wrap: anywhere;
+  color: #263b51;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 0.92rem;
 }
 
 .submission-status {
@@ -384,7 +398,7 @@ summary:focus-visible,
 }
 
 .export-panel {
-  margin-top: 32px;
+  margin-top: 26px;
   padding: 16px 18px;
   border: 1px solid var(--color-border);
   border-radius: 10px;
@@ -466,8 +480,8 @@ summary:focus-visible,
 
 .trial-header,
 .demographic-header {
-  margin-bottom: 24px;
-  padding-bottom: 22px;
+  margin-bottom: 19px;
+  padding-bottom: 17px;
   border-bottom: 1px solid var(--color-border);
 }
 
@@ -485,7 +499,7 @@ summary:focus-visible,
   grid-template-columns: auto minmax(120px, 1fr);
   align-items: center;
   gap: 14px;
-  margin-bottom: 18px;
+  margin-bottom: 14px;
   color: #53657a;
   font-size: 0.86rem;
   font-weight: 700;
@@ -523,7 +537,7 @@ summary:focus-visible,
 
 .stimulus {
   width: 100%;
-  margin: 0 0 24px;
+  margin: 0 0 20px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -791,7 +805,7 @@ summary:focus-visible,
 }
 
 .field-group {
-  margin-top: 18px;
+  margin-top: 15px;
   padding: 20px;
   border: 1px solid var(--color-border);
   border-radius: 10px;
@@ -1144,9 +1158,9 @@ summary:focus-visible,
     min-height: 100vh;
     min-height: 100dvh;
     padding:
-      max(24px, env(safe-area-inset-top))
+      max(21px, env(safe-area-inset-top))
       max(16px, env(safe-area-inset-right))
-      max(32px, env(safe-area-inset-bottom))
+      max(28px, env(safe-area-inset-bottom))
       max(16px, env(safe-area-inset-left));
     border: 0;
     border-radius: 0;
@@ -1154,13 +1168,13 @@ summary:focus-visible,
   }
 
   .card h1 {
-    font-size: clamp(1.9rem, 8vw, 2.2rem);
+    font-size: clamp(1.78rem, 7.4vw, 2.05rem);
   }
 
   .card h2,
   .trial-header h2,
   .demographic-header h2 {
-    font-size: 1.5rem;
+    font-size: 1.4rem;
   }
 
   .lead {
@@ -1203,12 +1217,12 @@ summary:focus-visible,
 
   .trial-header,
   .demographic-header {
-    margin-bottom: 20px;
-    padding-bottom: 18px;
+    margin-bottom: 17px;
+    padding-bottom: 15px;
   }
 
   .trial-progress {
-    margin-bottom: 15px;
+    margin-bottom: 12px;
   }
 
   .stimulus--media {

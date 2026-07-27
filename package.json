@@ -9,6 +9,7 @@
     "build": "npm run build -w frontend",
     "test": "npm run test -w frontend && npm run test:netlify-export && npm run test:randomization",
     "netlify:migrate": "node scripts/randomization/apply-schema-migrations.mjs",
+    "admin:generate-config": "node scripts/generate-admin-config.mjs",
     "test:netlify-export": "tsx --test scripts/tests/netlify-forms-export.test.mjs",
     "test:randomization": "tsx --test scripts/tests/randomization-*.test.mjs netlify/functions/tests/*.test.mts",
     "export:netlify": "tsx scripts/netlify-forms-export.mjs",

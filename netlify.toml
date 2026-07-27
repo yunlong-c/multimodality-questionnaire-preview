@@ -7,9 +7,9 @@
 [build.environment]
   NODE_VERSION = "22"
   VITE_STATIC_PREVIEW = "true"
+  VITE_AUTHORITATIVE_SUBMISSION = "true"
   VITE_DEFAULT_DATASET_CLASSIFICATION = "formal"
   MMQ_EXTERNAL_ASSETS = "false"
-  MMQ_EXCLUDE_ADMIN = "true"
 
 # Unpublished deploys are always research-test environments. Netlify Database
 # gives each Deploy Preview its own branch, and the participant UI additionally

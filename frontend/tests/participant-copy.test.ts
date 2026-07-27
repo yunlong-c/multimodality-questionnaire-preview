@@ -31,11 +31,19 @@ import {
   resolveExperimentFormat
 } from "../src/config/runtimeMode";
 import {
-  NETLIFY_FORM_NAME,
+  AuthoritativeSubmissionError,
+  NETLIFY_FORM_NAMES,
+  PENDING_SUBMISSION_STORAGE_KEY,
   buildNetlifyFormSubmission,
+  clearPendingSubmission,
+  createPendingSubmissionRecord,
   createNetlifySubmissionTransportState,
+  persistPendingSubmission,
+  postAuthoritativeSubmission,
   postNetlifyForm,
   prepareNetlifyFormAttempt,
+  readPendingSubmission,
+  reconcilePendingFallbackForAuthority,
   resolveStaticCollectionState
 } from "../src/api/client";
 import {
@@ -96,6 +104,10 @@ const controlledQuestionnaireSource = readFileSync(
 );
 const completionSource = readFileSync(
   path.resolve("src/submission/completion.ts"),
+  "utf8"
+);
+const apiClientSource = readFileSync(
+  path.resolve("src/api/client.ts"),
   "utf8"
 );
 const participantCopySource = readFileSync(
@@ -425,16 +437,73 @@ test("trial five renders a collapsed read-only example and leaves answer inputs 
   assert.doesNotMatch(trialRenderingSource, /\/assets\/ui\/example\.png/);
 });
 
-test("submission resolution distinguishes confirmed success from unconfirmed submission", async () => {
-  assert.equal(
-    await resolveSubmissionState(async () => undefined),
-    "success"
+test("compact participant chrome preserves all stimulus dimensions", () => {
+  assert.match(
+    stylesSource,
+    /\.stimulus-media-frame\s*\{[\s\S]*?width:\s*min\(820px,\s*100%\)/
   );
-  assert.equal(
+  assert.match(
+    stylesSource,
+    /\.series-image\s*\{[\s\S]*?width:\s*100%[\s\S]*?height:\s*auto/
+  );
+  assert.match(
+    stylesSource,
+    /\.series-table-grid\s*\{[\s\S]*?width:\s*min\(640px,\s*100%\)/
+  );
+  assert.match(
+    stylesSource,
+    /\.series-table th,\s*\.series-table td\s*\{[\s\S]*?height:\s*37px/
+  );
+  assert.match(
+    stylesSource,
+    /\.series-table td\s*\{[\s\S]*?font-size:\s*1rem/
+  );
+  assert.doesNotMatch(stylesSource, /\bzoom\s*:/);
+  assert.doesNotMatch(stylesSource, /transform:\s*scale\(/);
+  assert.match(
+    stylesSource,
+    /\.field input,[\s\S]*?font-size:\s*1rem/
+  );
+  assert.match(
+    stylesSource,
+    /\.button,[\s\S]*?min-height:\s*46px/
+  );
+});
+
+test("submission resolution distinguishes confirmed success from unconfirmed submission", async () => {
+  assert.deepEqual(
+    await resolveSubmissionState(async () => ({
+      status: "confirmed",
+      receipt: {
+        receiptId: "receipt-test-0001",
+        sessionId: "session-form-test",
+        participantId: "participant-form-test",
+        datasetClassification: "formal",
+        payloadSha256: "a".repeat(64),
+        storedAt: "2026-07-27T01:05:01.000Z",
+        isReplay: false,
+        authority: "netlify_database",
+        mirrorStatus: "pending"
+      }
+    })),
+    {
+      state: "success",
+      receiptId: "receipt-test-0001",
+      storedAt: "2026-07-27T01:05:01.000Z"
+    }
+  );
+  assert.deepEqual(
+    await resolveSubmissionState(async () => ({
+      status: "local_preview",
+      payloadSha256: "b".repeat(64)
+    })),
+    { state: "local_preview" }
+  );
+  assert.deepEqual(
     await resolveSubmissionState(async () => {
       throw new Error("simulated network failure");
     }),
-    "unconfirmed"
+    { state: "unconfirmed" }
   );
 });
 
@@ -804,8 +873,10 @@ test("Forms retries reconcile once and resend one frozen payload hash", async ()
   assert.equal(retryAttempt.body.get("submit_latency_ms"), "731");
 });
 
-test("Netlify form declaration and encoded submission contain the audited payload and SHA-256", async () => {
+test("v2 Netlify emergency forms remain separated while v1 is frozen", async () => {
   assert.match(indexSource, /name="mmq-submission-v1"/);
+  assert.match(indexSource, /name="mmq-submission-v2-formal"/);
+  assert.match(indexSource, /name="mmq-submission-v2-test"/);
   assert.match(indexSource, /data-netlify="true"/);
   for (const field of [
     "session_id",
@@ -825,7 +896,11 @@ test("Netlify form declaration and encoded submission contain the audited payloa
     "fallback_reconciled_at",
     "payload_json",
     "submit_attempt_count",
-    "submit_latency_ms"
+    "submit_latency_ms",
+    "receipt_id",
+    "submission_authority",
+    "mirror_status",
+    "mirror_source"
   ]) {
     assert.match(indexSource, new RegExp(`name="${field}"`));
   }
@@ -842,7 +917,10 @@ test("Netlify form declaration and encoded submission contain the audited payloa
 
   assert.equal(submission.payloadJson, expectedJson);
   assert.equal(submission.payloadSha256, expectedHash);
-  assert.equal(submission.body.get("form-name"), NETLIFY_FORM_NAME);
+  assert.equal(
+    submission.body.get("form-name"),
+    NETLIFY_FORM_NAMES.formal
+  );
   assert.equal(submission.body.get("payload_json"), expectedJson);
   assert.equal(submission.body.get("payload_sha256"), expectedHash);
   assert.equal(
@@ -870,12 +948,34 @@ test("Netlify form declaration and encoded submission contain the audited payloa
     submission.body.get("submit_latency_scope"),
     "previous_completed_attempt"
   );
+  assert.equal(
+    submission.body.get("mirror_status"),
+    "emergency_unconfirmed"
+  );
+  assert.equal(
+    submission.body.get("mirror_source"),
+    "client_emergency"
+  );
+  assert.equal(submission.body.get("receipt_id"), "");
   assert.equal(submission.body.has("ip"), false);
   assert.equal(submission.body.has("location"), false);
   assert.equal(submission.body.has("device_fingerprint"), false);
+
+  const testPayload = structuredClone(netlifyTestPayload);
+  testPayload.session.dataset_classification = "test";
+  testPayload.session.formal_collection_allowed = false;
+  const testSubmission = await buildNetlifyFormSubmission(
+    testPayload,
+    1,
+    null
+  );
+  assert.equal(
+    testSubmission.body.get("form-name"),
+    NETLIFY_FORM_NAMES.test
+  );
 });
 
-test("Netlify Forms accepts only a 2xx response as confirmed success", async () => {
+test("Netlify Forms 2xx only confirms an emergency copy, never authority", async () => {
   const submission = await buildNetlifyFormSubmission(
     netlifyTestPayload,
     1,
@@ -891,12 +991,329 @@ test("Netlify Forms accepts only a 2xx response as confirmed success", async () 
     new URLSearchParams(observedBody).get("payload_sha256"),
     submission.payloadSha256
   );
+  assert.equal(
+    new URLSearchParams(observedBody).get("form-name"),
+    NETLIFY_FORM_NAMES.formal
+  );
 
   const failedFetch: typeof fetch = async () =>
     new Response(null, { status: 503 });
   await assert.rejects(
     postNetlifyForm(submission, failedFetch),
     /Netlify Forms submit failed: 503/
+  );
+});
+
+test("pending payload is frozen before transport and cleared only by matching hash", async () => {
+  const storage = createMemoryStorage();
+  const submission = await buildNetlifyFormSubmission(
+    netlifyTestPayload,
+    1,
+    null
+  );
+  const pending = createPendingSubmissionRecord(
+    {
+      payloadJson: submission.payloadJson,
+      payloadSha256: submission.payloadSha256,
+      payloadSnapshot: structuredClone(netlifyTestPayload)
+    },
+    "client-submit-test-0001",
+    () => new Date("2026-07-27T01:05:00.100Z")
+  );
+
+  persistPendingSubmission(pending, storage);
+  assert.equal(
+    storage.getItem(PENDING_SUBMISSION_STORAGE_KEY) !== null,
+    true
+  );
+  assert.deepEqual(readPendingSubmission(storage), pending);
+
+  clearPendingSubmission("f".repeat(64), storage);
+  assert.deepEqual(readPendingSubmission(storage), pending);
+  clearPendingSubmission(pending.payload_sha256, storage);
+  assert.equal(readPendingSubmission(storage), null);
+});
+
+test("unreconciled fallback survives Forms backup and later upgrades to one authoritative receipt", async () => {
+  const storage = createMemoryStorage();
+  const fallbackPayload = structuredClone(netlifyTestPayload);
+  fallbackPayload.session = {
+    ...fallbackPayload.session,
+    session_id: "fallback-session-recovery-0001",
+    participant_id: "fallback-participant-recovery-0001",
+    format_assignment: "video",
+    allocation_id: "fallback-allocation-recovery-0001",
+    allocation_method: "client_fallback",
+    allocation_status: "unreconciled",
+    fallback_reason_code: "allocation_server_error",
+    fallback_reconciled_at: null
+  };
+  const initialSubmission = await buildNetlifyFormSubmission(
+    fallbackPayload,
+    0,
+    null
+  );
+  const initialPending = createPendingSubmissionRecord(
+    {
+      payloadJson: initialSubmission.payloadJson,
+      payloadSha256: initialSubmission.payloadSha256,
+      payloadSnapshot: structuredClone(fallbackPayload)
+    },
+    "client-fallback-recovery-0001"
+  );
+  persistPendingSubmission(initialPending, storage);
+
+  const stillPending =
+    await reconcilePendingFallbackForAuthority(
+      initialPending,
+      "client-fallback-recovery-0001",
+      async () => {
+        // Simulates a transient reconciliation failure: payload remains
+        // unreconciled and must not be sent to the authority endpoint.
+      },
+      storage
+    );
+  assert.equal(stillPending.readyForAuthority, false);
+  assert.equal(stillPending.hashUpdated, false);
+  assert.equal(
+    stillPending.pending.payload_sha256,
+    initialPending.payload_sha256
+  );
+
+  const emergencyCopy = await buildNetlifyFormSubmission(
+    JSON.parse(initialPending.payload_json) as ExperimentPayload,
+    1,
+    null
+  );
+  let emergencyBody = "";
+  await postNetlifyForm(
+    emergencyCopy,
+    async (_input, init) => {
+      emergencyBody = String(init?.body ?? "");
+      return new Response(null, { status: 204 });
+    }
+  );
+  assert.equal(
+    new URLSearchParams(emergencyBody).get("form-name"),
+    NETLIFY_FORM_NAMES.formal
+  );
+  assert.equal(
+    new URLSearchParams(emergencyBody).get("payload_sha256"),
+    initialPending.payload_sha256
+  );
+  initialPending.emergency_form_sent_at =
+    "2026-07-27T01:05:01.000Z";
+  persistPendingSubmission(initialPending, storage);
+
+  const restoredAfterRefresh = readPendingSubmission(storage);
+  assert.ok(restoredAfterRefresh);
+  const reconciled =
+    await reconcilePendingFallbackForAuthority(
+      restoredAfterRefresh,
+      "client-fallback-recovery-0001",
+      async (payload) => {
+        payload.session.allocation_status = "confirmed";
+        payload.session.fallback_reconciled_at =
+          "2026-07-27T01:05:02.000Z";
+      },
+      storage
+    );
+  assert.equal(reconciled.readyForAuthority, true);
+  assert.equal(reconciled.hashUpdated, true);
+  assert.notEqual(
+    reconciled.pending.payload_sha256,
+    initialPending.payload_sha256
+  );
+  assert.equal(reconciled.pending.emergency_form_sent_at, null);
+  const reconciledPayload = JSON.parse(
+    reconciled.pending.payload_json
+  ) as ExperimentPayload;
+  assert.equal(
+    reconciledPayload.session.session_id,
+    fallbackPayload.session.session_id
+  );
+  assert.equal(
+    reconciledPayload.session.format_assignment,
+    fallbackPayload.session.format_assignment
+  );
+  assert.equal(
+    reconciledPayload.session.allocation_status,
+    "confirmed"
+  );
+  assert.deepEqual(
+    reconciledPayload.trials,
+    fallbackPayload.trials
+  );
+  assert.deepEqual(
+    reconciledPayload.demographics,
+    fallbackPayload.demographics
+  );
+
+  let authorityPayloadHash = "";
+  const receipt = await postAuthoritativeSubmission(
+    reconciled.pending,
+    async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as {
+        payload_sha256: string;
+      };
+      authorityPayloadHash = request.payload_sha256;
+      return Response.json(
+        {
+          receipt_id: "receipt-fallback-recovery-0001",
+          session_id: fallbackPayload.session.session_id,
+          participant_id:
+            fallbackPayload.session.participant_id,
+          dataset_classification: "formal",
+          payload_sha256: reconciled.pending.payload_sha256,
+          stored_at: "2026-07-27T01:05:03.000Z",
+          is_replay: false,
+          authority: "netlify_database",
+          mirror_status: "pending"
+        },
+        { status: 201 }
+      );
+    }
+  );
+  assert.equal(
+    authorityPayloadHash,
+    reconciled.pending.payload_sha256
+  );
+  assert.equal(
+    receipt.receiptId,
+    "receipt-fallback-recovery-0001"
+  );
+});
+
+test("authoritative submit requires a matching database receipt", async () => {
+  const submission = await buildNetlifyFormSubmission(
+    netlifyTestPayload,
+    1,
+    null
+  );
+  const pending = createPendingSubmissionRecord(
+    {
+      payloadJson: submission.payloadJson,
+      payloadSha256: submission.payloadSha256,
+      payloadSnapshot: structuredClone(netlifyTestPayload)
+    },
+    "client-submit-test-0001"
+  );
+  let observedRequest: Record<string, unknown> | null = null;
+  const receipt = await postAuthoritativeSubmission(
+    pending,
+    async (input, init) => {
+      assert.equal(String(input), "/api/submit");
+      observedRequest = JSON.parse(String(init?.body)) as Record<
+        string,
+        unknown
+      >;
+      return Response.json(
+        {
+          receipt_id: "receipt-authority-test-0001",
+          session_id: netlifyTestPayload.session.session_id,
+          participant_id:
+            netlifyTestPayload.session.participant_id,
+          dataset_classification: "formal",
+          payload_sha256: submission.payloadSha256,
+          stored_at: "2026-07-27T01:05:01.000Z",
+          is_replay: false,
+          authority: "netlify_database",
+          mirror_status: "pending"
+        },
+        { status: 201 }
+      );
+    }
+  );
+
+  assert.equal(receipt.receiptId, "receipt-authority-test-0001");
+  assert.equal(receipt.payloadSha256, submission.payloadSha256);
+  assert.equal(observedRequest?.schema_version, 1);
+  assert.equal(
+    observedRequest?.client_token,
+    "client-submit-test-0001"
+  );
+  assert.equal(
+    observedRequest?.payload_json,
+    submission.payloadJson
+  );
+  assert.equal(
+    observedRequest?.payload_sha256,
+    submission.payloadSha256
+  );
+  assert.deepEqual(observedRequest?.transport, {
+    client_attempt_count: 1,
+    previous_attempt_latency_ms: null
+  });
+
+  const mismatchedPending = {
+    ...pending,
+    attempt_count: 0,
+    previous_attempt_latency_ms: null
+  };
+  await assert.rejects(
+    postAuthoritativeSubmission(
+      mismatchedPending,
+      async () =>
+        Response.json(
+          {
+            receipt_id: "receipt-wrong-hash",
+            session_id: netlifyTestPayload.session.session_id,
+            participant_id:
+              netlifyTestPayload.session.participant_id,
+            dataset_classification: "formal",
+            payload_sha256: "0".repeat(64),
+            stored_at: "2026-07-27T01:05:01.000Z",
+            is_replay: false,
+            authority: "netlify_database",
+            mirror_status: "pending"
+          },
+          { status: 201 }
+        )
+    ),
+    /did not match the frozen submission/
+  );
+
+  const conflictPending = {
+    ...pending,
+    attempt_count: 0,
+    previous_attempt_latency_ms: null
+  };
+  await assert.rejects(
+    postAuthoritativeSubmission(
+      conflictPending,
+      async () =>
+        Response.json(
+          {
+            error: {
+              code: "SUBMISSION_CONFLICT",
+              message: "a different payload already exists",
+              retryable: false
+            }
+          },
+          { status: 409 }
+        )
+    ),
+    (error: unknown) =>
+      error instanceof AuthoritativeSubmissionError &&
+      error.code === "SUBMISSION_CONFLICT" &&
+      error.retryable === false
+  );
+});
+
+test("Deploy Preview test data uses authority and cannot treat Forms as saved", () => {
+  assert.match(apiClientSource, /AUTHORITATIVE_SUBMIT_ENDPOINT\s*=\s*"\/api\/submit"/);
+  assert.match(
+    apiClientSource,
+    /if\s*\(!usesAuthoritativeSubmissionTransport\(\)\)[\s\S]*?status:\s*"local_preview"/
+  );
+  assert.doesNotMatch(apiClientSource, /isNetlifyFormsMode/);
+  assert.match(
+    completionSource,
+    /result\.status\s*===\s*"confirmed"/
+  );
+  assert.doesNotMatch(
+    completionSource,
+    /await submit\(\);\s*return\s+"success"/
   );
 });
 
@@ -954,11 +1371,28 @@ test("valid fixed-format links select that format and are classified as test", (
 });
 
 test("success and unconfirmed completion states render different, truthful HTML", () => {
-  const successHtml = buildCompletionHtml("success", 5);
-  const unconfirmedHtml = buildCompletionHtml("unconfirmed", 5);
+  const successHtml = buildCompletionHtml(
+    {
+      state: "success",
+      receiptId: "receipt-display-test-0001",
+      storedAt: "2026-07-27T01:05:01.000Z"
+    },
+    5
+  );
+  const unconfirmedHtml = buildCompletionHtml(
+    { state: "unconfirmed" },
+    5
+  );
+  const localPreviewHtml = buildCompletionHtml(
+    { state: "local_preview" },
+    5
+  );
 
   assert.notEqual(successHtml, unconfirmedHtml);
-  assert.match(successHtml, /(?:提交成功|已成功提交)/);
+  assert.match(
+    successHtml,
+    /(?:提交成功|已成功提交|已由研究服务器确认保存)/
+  );
   assert.doesNotMatch(
     successHtml,
     /(?:尚未确认|未确认提交|提交未成功|重新提交)/
@@ -973,14 +1407,33 @@ test("success and unconfirmed completion states render different, truthful HTML"
     /(?:您的作答已成功提交|您现在可以关闭|安全地关闭|data-completion-status="success")/
   );
   assert.match(unconfirmedHtml, /(?:重试|重新提交)/);
+  assert.match(successHtml, /receipt-display-test-0001/);
+  assert.match(successHtml, /已由研究服务器确认保存/);
+  assert.match(unconfirmedHtml, /主存储/);
+  assert.doesNotMatch(unconfirmedHtml, /已由研究服务器确认保存/);
+  assert.match(localPreviewHtml, /没有发送到研究服务器/);
+  assert.doesNotMatch(
+    localPreviewHtml,
+    /data-completion-status="success"/
+  );
 
   assert.match(successHtml, /下载本人作答备份（可选）/);
   assert.match(unconfirmedHtml, /下载本人作答备份（可选）/);
 });
 
 test("completion debrief and method disclaimers are absent from participant-facing sources", () => {
-  const successHtml = buildCompletionHtml("success", 5);
-  const unconfirmedHtml = buildCompletionHtml("unconfirmed", 5);
+  const successHtml = buildCompletionHtml(
+    {
+      state: "success",
+      receiptId: "receipt-copy-test-0001",
+      storedAt: "2026-07-27T01:05:01.000Z"
+    },
+    5
+  );
+  const unconfirmedHtml = buildCompletionHtml(
+    { state: "unconfirmed" },
+    5
+  );
 
   const renderedSources =
     `${participantCopySource}\n${trialRenderingSource}\n${completionSource}`;

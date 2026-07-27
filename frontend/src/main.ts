@@ -8,6 +8,8 @@ import {
   allocationMetadataFromBootstrap,
   apiBootstrap,
   apiSubmit,
+  loadRecoverablePendingSubmission,
+  type SubmissionResult,
   type BootstrapResponse
 } from "./api/client";
 import {
@@ -35,8 +37,34 @@ if (!app) {
   throw new Error("App root #app not found.");
 }
 
-renderLandingPage(app);
 renderRegulatoryFooter();
+void initializeParticipantApp(app);
+
+async function initializeParticipantApp(
+  root: HTMLDivElement
+): Promise<void> {
+  try {
+    const pending = await loadRecoverablePendingSubmission();
+    if (pending) {
+      const submit = () =>
+        apiSubmit(
+          pending.sessionId,
+          pending.participantId,
+          pending.payload
+        );
+      renderSubmittingPage(root, true);
+      await submitAndRenderCompletion(
+        root,
+        pending.payload,
+        submit
+      );
+      return;
+    }
+  } catch {
+    // A damaged local recovery record must not block a new questionnaire.
+  }
+  renderLandingPage(root);
+}
 
 function renderLandingPage(root: HTMLDivElement): void {
   root.innerHTML = `
@@ -197,7 +225,7 @@ function renderConsentPage(root: HTMLDivElement): void {
                 bootstrap.participant_id,
                 payload
               );
-            renderSubmittingPage(root);
+            renderSubmittingPage(root, false);
             void submitAndRenderCompletion(root, payload, submit);
           }
         });
@@ -212,15 +240,18 @@ function renderConsentPage(root: HTMLDivElement): void {
   });
 }
 
-type SubmitRequest = () => Promise<unknown>;
+type SubmitRequest = () => Promise<SubmissionResult>;
 
-function renderSubmittingPage(root: HTMLDivElement): void {
+function renderSubmittingPage(
+  root: HTMLDivElement,
+  isRecovery: boolean
+): void {
   root.innerHTML = `
     <main class="shell shell--success">
       <section class="card submission-status" role="status" aria-live="polite">
-        <p class="eyebrow">正在提交</p>
-        <h1>正在保存您的作答</h1>
-        <p class="lead">请保持此页面打开，提交完成后页面会自动更新。</p>
+        <p class="eyebrow">${isRecovery ? "正在恢复提交" : "正在提交"}</p>
+        <h1>${isRecovery ? "正在确认上次作答" : "正在保存您的作答"}</h1>
+        <p class="lead">请保持此页面打开。只有研究服务器返回完成编号后，页面才会显示“已保存”。</p>
       </section>
     </main>
   `;
@@ -260,7 +291,7 @@ function renderCompletionPage(
     }
 
     const nextStatus = await resolveSubmissionState(submit);
-    if (nextStatus === "success") {
+    if (nextStatus.state !== "unconfirmed") {
       renderCompletionPage(root, payload, nextStatus, submit);
       return;
     }
