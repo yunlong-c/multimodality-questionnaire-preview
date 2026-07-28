@@ -16,9 +16,14 @@ import {
 import { renderSeriesTable } from "./seriesTableRenderer";
 import {
   VIDEO_ASSET_LOAD_TIMEOUT_MS,
+  VIDEO_COMPLETE_REVEAL_DURATION_MS,
   appendPlaybackFragment,
   beginPlaybackAfterLoad,
+  getVideoHiddenAction,
   preloadImageAsset,
+  shouldShowVideoTerminalFrame,
+  type VideoCompletionContext,
+  type VideoPlaybackMode,
   waitForImageLoad
 } from "./videoAssetLoader";
 
@@ -312,11 +317,15 @@ export function attachStimulusInteractions(
     if (image && replayButton && retryButton) {
       const gifUrl = image.dataset.gifSrc;
       const terminalFrameUrl = image.dataset.terminalFrameSrc;
-      const revealDurationMs = stimulus.reveal_duration_ms;
+      const revealDurationMs = VIDEO_COMPLETE_REVEAL_DURATION_MS;
       let playbackTimer: number | null = null;
       let loadController: AbortController | null = null;
       let playbackAttempt = 0;
-      let failedMode: "initial" | "replay" | null = null;
+      let failedMode: VideoPlaybackMode | null = null;
+      let activeMode: VideoPlaybackMode | null = null;
+      let restartInitialWhenVisible = false;
+      let countInitialRestartWhenVisible = false;
+      let cleanedUp = false;
 
       const showTerminalFrame = (): void => {
         if (terminalFrameUrl && image.isConnected) {
@@ -326,9 +335,9 @@ export function attachStimulusInteractions(
         image.removeAttribute("aria-busy");
       };
 
-      const showCompletedState = (): void => {
-        showTerminalFrame();
+      const showCompletedControls = (): void => {
         setNavigationLocked(false);
+        activeMode = null;
         failedMode = null;
         retryButton.hidden = true;
         retryButton.disabled = true;
@@ -353,9 +362,23 @@ export function attachStimulusInteractions(
         }
       };
 
+      const showCompletedPresentation = (
+        context: VideoCompletionContext
+      ): void => {
+        if (shouldShowVideoTerminalFrame(context)) {
+          showTerminalFrame();
+        }
+        showCompletedControls();
+      };
+
       const completeInitialReveal = (): void => {
         state.videoRevealCompleted = true;
-        showCompletedState();
+        showCompletedPresentation("natural_completion");
+      };
+
+      const completeReplay = (): void => {
+        state.videoReplayCompleted = true;
+        showCompletedPresentation("natural_completion");
       };
 
       const schedule = (onComplete: () => void): void => {
@@ -372,7 +395,57 @@ export function attachStimulusInteractions(
         }
       };
 
+      const cancelActivePlayback = (): void => {
+        loadController?.abort();
+        loadController = null;
+        if (playbackTimer !== null) {
+          window.clearTimeout(playbackTimer);
+          playbackTimer = null;
+        }
+      };
+
+      const handleVisibilityChange = (): void => {
+        if (!document.hidden) {
+          if (
+            restartInitialWhenVisible &&
+            !state.videoRevealCompleted &&
+            !cleanedUp
+          ) {
+            if (countInitialRestartWhenVisible) {
+              state.videoInitialRestartCount += 1;
+            }
+            restartInitialWhenVisible = false;
+            countInitialRestartWhenVisible = false;
+            void beginPlayback("initial");
+          }
+          return;
+        }
+
+        const action = getVideoHiddenAction(activeMode);
+        if (action === "none") {
+          return;
+        }
+
+        cancelActivePlayback();
+        activeMode = null;
+        failedMode = null;
+
+        if (action === "restart_initial_when_visible") {
+          restartInitialWhenVisible = true;
+          countInitialRestartWhenVisible = true;
+          image.hidden = true;
+          image.removeAttribute("src");
+          image.setAttribute("aria-busy", "true");
+          setNavigationLocked(true);
+          return;
+        }
+
+        state.videoReplayCompleted = false;
+        showCompletedPresentation("interrupted_replay");
+      };
+
       const showLoadFailure = (mode: "initial" | "replay"): void => {
+        activeMode = null;
         failedMode = mode;
         image.hidden = true;
         image.removeAttribute("src");
@@ -397,8 +470,17 @@ export function attachStimulusInteractions(
       };
 
       const beginPlayback = async (
-        mode: "initial" | "replay"
+        mode: VideoPlaybackMode
       ): Promise<void> => {
+        if (cleanedUp) {
+          return;
+        }
+        if (mode === "initial" && document.hidden) {
+          restartInitialWhenVisible = true;
+          setNavigationLocked(true);
+          return;
+        }
+
         const assetLoadStartedAt =
           mode === "initial"
             ? beginAssetLoadAttempt(state, performance.now())
@@ -421,6 +503,10 @@ export function attachStimulusInteractions(
         loadController = new AbortController();
         const { signal } = loadController;
         playbackAttempt += 1;
+        activeMode = mode;
+        if (mode === "initial") {
+          restartInitialWhenVisible = false;
+        }
         failedMode = null;
 
         if (playbackTimer !== null) {
@@ -504,7 +590,7 @@ export function attachStimulusInteractions(
               schedule(
                 mode === "initial"
                   ? completeInitialReveal
-                  : showCompletedState
+                  : completeReplay
               );
             }
           });
@@ -533,6 +619,7 @@ export function attachStimulusInteractions(
         }
 
         state.videoReplayUsed = true;
+        state.videoReplayCompleted = false;
         replayButton.hidden = false;
         replayButton.disabled = true;
         replayButton.textContent = "重播已使用";
@@ -549,8 +636,10 @@ export function attachStimulusInteractions(
         void beginPlayback(failedMode);
       };
 
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+
       if (state.videoRevealCompleted) {
-        showCompletedState();
+        showCompletedPresentation("completed_revisit");
       } else {
         setNavigationLocked(true);
         replayButton.hidden = true;
@@ -564,12 +653,18 @@ export function attachStimulusInteractions(
       replayButton.addEventListener("click", replay);
       retryButton.addEventListener("click", retryLoad);
       cleanupCallbacks.push(() => {
+        cleanedUp = true;
         replayButton.removeEventListener("click", replay);
         retryButton.removeEventListener("click", retryLoad);
-        loadController?.abort();
-        if (playbackTimer !== null) {
-          window.clearTimeout(playbackTimer);
+        document.removeEventListener(
+          "visibilitychange",
+          handleVisibilityChange
+        );
+        if (activeMode === "replay") {
+          state.videoReplayCompleted = false;
         }
+        cancelActivePlayback();
+        activeMode = null;
       });
     }
   } else {
@@ -758,14 +853,18 @@ function renderStimulus(stimulus: AssembledTrial): string {
   const terminalFrameUrl = stimulus.terminal_frame_path
     ? resolveAssetUrl(stimulus.terminal_frame_path)
     : "";
+  const playbackAssetUrl = stimulus.playback_asset_path
+    ? resolveAssetUrl(stimulus.playback_asset_path)
+    : "";
   const replayInitiallyHidden =
-    stimulus.reveal_duration_ms !== null && stimulus.reveal_duration_ms > 0;
+    stimulus.video_playback_version === "single-play-gif-v1";
 
   return `
     <section
       class="stimulus stimulus--video stimulus--media"
       data-video-stimulus
-      data-reveal-duration-ms="${stimulus.reveal_duration_ms ?? ""}"
+      data-reveal-duration-ms="${VIDEO_COMPLETE_REVEAL_DURATION_MS}"
+      data-video-playback-version="${escapeHtml(stimulus.video_playback_version ?? "")}"
     >
       <div class="stimulus-caption">${caption}</div>
       <div class="stimulus-media-frame video-card">
@@ -782,7 +881,7 @@ function renderStimulus(stimulus: AssembledTrial): string {
           data-fullscreen-media
           data-fullscreen-label="历史数据动画"
           data-video-image
-          data-gif-src="${escapeHtml(stimulusUrl)}"
+          data-gif-src="${escapeHtml(playbackAssetUrl)}"
           data-terminal-frame-src="${escapeHtml(terminalFrameUrl)}"
           aria-busy="true"
           hidden

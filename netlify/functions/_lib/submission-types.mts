@@ -5,6 +5,7 @@ import type {
 } from "./randomization-types.mts";
 
 export type DatasetClassification = "formal" | "test";
+export type VideoPlaybackVersion = "single-play-gif-v1";
 export type SubmissionMirrorStatus =
   | "pending"
   | "processing"

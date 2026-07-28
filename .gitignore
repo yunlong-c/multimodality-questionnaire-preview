@@ -32,6 +32,7 @@ private/
 !frontend/src/data/officialManifest.ts
 !frontend/src/data/releaseInfo.ts
 !frontend/src/data/sequenceCatalog.generated.ts
+!frontend/src/data/videoPlaybackManifest.generated.ts
 
 # Local Netlify folder
 .netlify

@@ -7,6 +7,7 @@ import type {
   StimulusSequence
 } from "./manifestTypes";
 import { TABLE_RENDERER_VERSION } from "../experiment/seriesTableRenderer";
+import { getVideoPlaybackMetadata } from "./videoPlaybackManifest.generated";
 
 const EXPECTED_SEQUENCE_COUNTS: Readonly<Record<PoolName, number>> = {
   Pool_1: 80,
@@ -206,6 +207,10 @@ function assembleTrial(
 ): AssembledTrial {
   const presentation = sequence.presentations[format];
   const usesLegacyAsset = format !== "table";
+  const videoPlayback =
+    format === "video"
+      ? getVideoPlaybackMetadata(presentation.presentation_uid)
+      : null;
 
   return {
     trial_no: trialNo,
@@ -226,13 +231,25 @@ function assembleTrial(
     values_sha256: sequence.values_sha256,
     legacy_path: presentation.legacy_path,
     legacy_asset_sha256: presentation.asset_sha256,
-    asset_sha256: usesLegacyAsset ? presentation.asset_sha256 : null,
+    asset_sha256:
+      format === "video"
+        ? videoPlayback?.playback_asset_sha256 ?? null
+        : usesLegacyAsset
+          ? presentation.asset_sha256
+          : null,
     renderer_version: usesLegacyAsset
       ? null
       : TABLE_RENDERER_VERSION,
     terminal_frame_path: presentation.terminal_frame_path ?? null,
     terminal_frame_sha256: presentation.terminal_frame_sha256 ?? null,
-    reveal_duration_ms: presentation.reveal_duration_ms ?? null,
+    reveal_duration_ms:
+      videoPlayback?.reveal_duration_ms ??
+      presentation.reveal_duration_ms ??
+      null,
+    video_playback_version: videoPlayback?.playback_version ?? null,
+    playback_asset_path: videoPlayback?.playback_asset_path ?? null,
+    playback_asset_sha256:
+      videoPlayback?.playback_asset_sha256 ?? null,
     pool2_speed:
       sequence.pool === "Pool_2" && sequence.variant !== "base"
         ? sequence.variant

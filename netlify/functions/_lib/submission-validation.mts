@@ -3,6 +3,9 @@ import {
   sequenceCatalog,
 } from "../../../frontend/src/data/sequenceCatalog.generated.ts";
 import {
+  getVideoPlaybackMetadata,
+} from "../../../frontend/src/data/videoPlaybackManifest.generated.ts";
+import {
   trialCsvHeaders,
 } from "../../../frontend/src/experiment/experimentTypes.ts";
 import {
@@ -30,6 +33,7 @@ import {
 import type {
   DatasetClassification,
   ValidatedSubmission,
+  VideoPlaybackVersion,
 } from "./submission-types.mts";
 
 export const MAX_SUBMISSION_REQUEST_BYTES = 512 * 1024;
@@ -122,6 +126,8 @@ const DEMOGRAPHIC_OPTIONS = {
 const MAX_RESEARCH_DURATION_MS = 30 * 24 * 60 * 60 * 1_000;
 const MAX_RESEARCH_COUNTER = 100_000;
 const MAX_ANSWER_MAGNITUDE = 1e12;
+const VIDEO_PLAYBACK_VERSION: VideoPlaybackVersion =
+  "single-play-gif-v1";
 const EXPECTED_POOLS = [
   "Pool_1",
   "Pool_2",
@@ -449,8 +455,26 @@ function assertTrials(
       );
     }
     const presentation = sequence.presentations[format];
+    const videoPlayback = format === "video"
+      ? getVideoPlaybackMetadata(presentation.presentation_uid)
+      : null;
+    if (
+      format === "video"
+      && (
+        !videoPlayback
+        || videoPlayback.playback_version !== VIDEO_PLAYBACK_VERSION
+      )
+    ) {
+      throw submissionReleaseMismatch();
+    }
     const expectedAssetSha256 =
-      format === "table" ? null : presentation.asset_sha256;
+      format === "table"
+        ? null
+        : videoPlayback?.playback_asset_sha256
+          ?? presentation.asset_sha256;
+    const expectedStimulusPath =
+      videoPlayback?.playback_asset_path
+      ?? presentation.legacy_path;
     const expectedRendererVersion =
       format === "table" ? TABLE_RENDERER_VERSION : null;
     if (
@@ -468,10 +492,16 @@ function assertTrials(
       || trial.presentation_uid !== presentation.presentation_uid
       || trial.legacy_path !== presentation.legacy_path
       || trial.legacy_asset_path !== presentation.legacy_path
-      || trial.stimulus_path !== presentation.legacy_path
+      || trial.stimulus_path !== expectedStimulusPath
       || trial.legacy_asset_sha256 !== presentation.asset_sha256
       || trial.asset_sha256 !== expectedAssetSha256
       || trial.renderer_version !== expectedRendererVersion
+      || trial.video_playback_version
+        !== (videoPlayback?.playback_version ?? null)
+      || trial.playback_asset_path
+        !== (videoPlayback?.playback_asset_path ?? null)
+      || trial.playback_asset_sha256
+        !== (videoPlayback?.playback_asset_sha256 ?? null)
       || !sequence.response_eligibility.includes(
         EXPECTED_RESPONSE_TYPES[index],
       )
@@ -569,6 +599,54 @@ function assertTrialOperationalFields(
   if (revisionCount > visitCount - 1) {
     throw invalidSubmissionRequest(
       `'${label}.revision_count' cannot exceed visit_count - 1.`,
+    );
+  }
+
+  if (format === "video") {
+    if (
+      typeof trial.video_replay_used !== "boolean"
+      || typeof trial.video_replay_completed !== "boolean"
+    ) {
+      throw invalidSubmissionRequest(
+        `'${label}' Video replay fields must be boolean.`,
+      );
+    }
+    if (
+      trial.video_replay_completed === true
+      && trial.video_replay_used !== true
+    ) {
+      throw invalidSubmissionRequest(
+        `'${label}.video_replay_completed' requires video_replay_used.`,
+      );
+    }
+    integerInRange(
+      trial.video_initial_restart_count,
+      0,
+      MAX_RESEARCH_COUNTER,
+      `${label}.video_initial_restart_count`,
+    );
+  } else {
+    for (const field of [
+      "video_playback_version",
+      "playback_asset_path",
+      "playback_asset_sha256",
+    ]) {
+      assertEqual(trial[field], null, `${label}.${field}`);
+    }
+    assertEqual(
+      trial.video_replay_used,
+      false,
+      `${label}.video_replay_used`,
+    );
+    assertEqual(
+      trial.video_replay_completed,
+      false,
+      `${label}.video_replay_completed`,
+    );
+    assertEqual(
+      trial.video_initial_restart_count,
+      0,
+      `${label}.video_initial_restart_count`,
     );
   }
 

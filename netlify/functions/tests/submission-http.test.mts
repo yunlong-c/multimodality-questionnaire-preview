@@ -33,6 +33,9 @@ import {
   sequenceCatalog,
 } from "../../../frontend/src/data/sequenceCatalog.generated.ts";
 import {
+  getVideoPlaybackMetadata,
+} from "../../../frontend/src/data/videoPlaybackManifest.generated.ts";
+import {
   TABLE_RENDERER_VERSION,
 } from "../../../frontend/src/experiment/seriesTableRenderer.ts";
 
@@ -137,6 +140,15 @@ function experimentPayload(
         )!;
       const presentation = sequence.presentations[format];
       const isTable = format === "table";
+      const isVideo = format === "video";
+      const videoPlayback = isVideo
+        ? getVideoPlaybackMetadata(presentation.presentation_uid)
+        : null;
+      if (isVideo && !videoPlayback) {
+        throw new Error(
+          `Missing Video playback metadata for ${presentation.presentation_uid}.`,
+        );
+      }
       const isDistribution = index === 4;
       const supports = isDistribution
         ? [1, 2, 3, 4, 5]
@@ -168,10 +180,28 @@ function experimentPayload(
         source_data_file: sequence.source_data_file,
         legacy_path: presentation.legacy_path,
         legacy_asset_path: presentation.legacy_path,
-        stimulus_path: presentation.legacy_path,
+        stimulus_path: isVideo
+          ? videoPlayback!.playback_asset_path
+          : presentation.legacy_path,
         legacy_asset_sha256: presentation.asset_sha256,
-        asset_sha256: isTable ? null : presentation.asset_sha256,
+        asset_sha256: isTable
+          ? null
+          : isVideo
+            ? videoPlayback!.playback_asset_sha256
+            : presentation.asset_sha256,
         renderer_version: isTable ? TABLE_RENDERER_VERSION : null,
+        video_playback_version: isVideo
+          ? videoPlayback!.playback_version
+          : null,
+        playback_asset_path: isVideo
+          ? videoPlayback!.playback_asset_path
+          : null,
+        playback_asset_sha256: isVideo
+          ? videoPlayback!.playback_asset_sha256
+          : null,
+        video_replay_used: false,
+        video_replay_completed: false,
+        video_initial_restart_count: 0,
         pool2_speed:
           sequence.pool === "Pool_2" ? sequence.variant : null,
         rho: metadata.rho ?? null,
@@ -312,6 +342,41 @@ test("the strict schema accepts complete Table, Graph, and Video payloads", asyn
     repository.calls.map((call) => call.formatAssignment),
     ["table", "graph", "video"],
   );
+});
+
+test("Video playback assets and replay audit fields are strictly validated", async () => {
+  const repository = new FakeRepository();
+  const handler = createSubmitHandler(() => repository);
+  const invalidPayloads = [];
+
+  const forgedPlaybackPath = experimentPayload("formal", "video");
+  forgedPlaybackPath.trials[0].playback_asset_path =
+    "assets/video-single-play/forged.gif";
+  forgedPlaybackPath.trials[0].stimulus_path =
+    "assets/video-single-play/forged.gif";
+  invalidPayloads.push(forgedPlaybackPath);
+
+  const forgedPlaybackHash = experimentPayload("formal", "video");
+  forgedPlaybackHash.trials[0].playback_asset_sha256 = "0".repeat(64);
+  forgedPlaybackHash.trials[0].asset_sha256 = "0".repeat(64);
+  invalidPayloads.push(forgedPlaybackHash);
+
+  const replayCompletedWithoutUse = experimentPayload("formal", "video");
+  replayCompletedWithoutUse.trials[0].video_replay_completed = true;
+  invalidPayloads.push(replayCompletedWithoutUse);
+
+  const nonVideoPlaybackMetadata = experimentPayload("formal", "graph");
+  nonVideoPlaybackMetadata.trials[0].video_playback_version =
+    "single-play-gif-v1";
+  invalidPayloads.push(nonVideoPlaybackMetadata);
+
+  for (const payload of invalidPayloads) {
+    const response = await handler(
+      jsonRequest(requestBodyForPayload(payload)),
+    );
+    assert.equal(response.status, 400);
+  }
+  assert.equal(repository.calls.length, 0);
 });
 
 test("same-hash replay returns HTTP 200 and does not require the gate", async () => {
