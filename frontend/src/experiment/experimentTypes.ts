@@ -29,6 +29,8 @@ export type AssetLoadStatus =
   | "loaded"
   | "failed";
 
+export type VideoPlaybackVersion = "single-play-gif-v1";
+
 export interface StartExperimentOptions {
   mount: HTMLElement;
   formatAssignment: StimulusFormat;
@@ -89,6 +91,12 @@ export interface ExperimentTrial {
   legacy_asset_sha256: string;
   asset_sha256: string | null;
   renderer_version: string | null;
+  video_playback_version: VideoPlaybackVersion | null;
+  playback_asset_path: string | null;
+  playback_asset_sha256: string | null;
+  video_replay_used: boolean;
+  video_replay_completed: boolean;
+  video_initial_restart_count: number;
   values_sha256: string;
   pool2_speed: "fast" | "slow" | null;
   source_data_file: string | null;
@@ -158,6 +166,12 @@ export const trialCsvHeaders = [
   "legacy_asset_sha256",
   "asset_sha256",
   "renderer_version",
+  "video_playback_version",
+  "playback_asset_path",
+  "playback_asset_sha256",
+  "video_replay_used",
+  "video_replay_completed",
+  "video_initial_restart_count",
   "values_sha256",
   "pool2_speed",
   "source_data_file",

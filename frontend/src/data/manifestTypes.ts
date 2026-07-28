@@ -90,6 +90,9 @@ export interface AssembledTrial {
   terminal_frame_path: string | null;
   terminal_frame_sha256: string | null;
   reveal_duration_ms: number | null;
+  video_playback_version: string | null;
+  playback_asset_path: string | null;
+  playback_asset_sha256: string | null;
   pool2_speed: "fast" | "slow" | null;
   source_data_file: string;
   metadata: StimulusMetadata;

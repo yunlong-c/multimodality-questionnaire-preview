@@ -113,6 +113,7 @@ const PARTICIPANT_HEADERS = [
   "session_id",
   "participant_id",
   "dataset_classification",
+  "video_playback_classification",
   "format_assignment",
   "allocation_id",
   "randomization_version",
@@ -152,6 +153,7 @@ const TRIAL_HEADERS = [
   "participant_id",
   "payload_sha256",
   "stored_at",
+  "video_playback_classification",
   "allocation_id",
   "randomization_version",
   "allocation_method",
@@ -161,6 +163,16 @@ const TRIAL_HEADERS = [
   "fallback_reconciled_at",
   ...trialCsvHeaders,
 ] as const;
+
+const VIDEO_PLAYBACK_FIELDS = [
+  "video_playback_version",
+  "playback_asset_path",
+  "playback_asset_sha256",
+  "video_replay_used",
+  "video_replay_completed",
+  "video_initial_restart_count",
+] as const;
+const VIDEO_PLAYBACK_VERSION = "single-play-gif-v1";
 
 const MIRROR_HEADERS = [
   "mirror_id",
@@ -258,6 +270,33 @@ function parsePayload(value: unknown): {
   return { session, demographics, trials };
 }
 
+function videoPlaybackClassification(
+  trials: Record<string, unknown>[],
+): "single-play-gif-v1" | "pre-single-play" {
+  const schemas = new Set<
+    "single-play-gif-v1" | "pre-single-play"
+  >(
+    trials.map((trial) => {
+      const present = VIDEO_PLAYBACK_FIELDS.filter((field) =>
+        Object.prototype.hasOwnProperty.call(trial, field)
+      );
+      if (present.length === 0) return "pre-single-play";
+      if (present.length === VIDEO_PLAYBACK_FIELDS.length) {
+        return VIDEO_PLAYBACK_VERSION;
+      }
+      throw new Error(
+        "A stored submission has a partial Video playback schema.",
+      );
+    }),
+  );
+  if (schemas.size !== 1) {
+    throw new Error(
+      "A stored submission mixes Video playback schema versions.",
+    );
+  }
+  return schemas.values().next().value!;
+}
+
 function submissionMetadata(
   row: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -305,6 +344,8 @@ function participantRow(
         value,
       ]),
     ),
+    video_playback_classification:
+      videoPlaybackClassification(payload.trials),
     ...submissionMetadata(row),
   };
 }
@@ -314,8 +355,19 @@ function trialRows(
 ): Record<string, unknown>[] {
   const payload = parsePayload(row.payload_json);
   const metadata = submissionMetadata(row);
+  const playbackClassification =
+    videoPlaybackClassification(payload.trials);
   return payload.trials.map((trial) => ({
     ...trial,
+    ...Object.fromEntries(
+      VIDEO_PLAYBACK_FIELDS.map((field) => [
+        field,
+        Object.prototype.hasOwnProperty.call(trial, field)
+          ? trial[field]
+          : "",
+      ]),
+    ),
+    video_playback_classification: playbackClassification,
     receipt_id: metadata.receipt_id,
     participant_id: metadata.participant_id,
     payload_sha256: metadata.payload_sha256,
@@ -334,9 +386,12 @@ function trialRows(
 function jsonRow(
   row: Record<string, unknown>,
 ): Record<string, unknown> {
+  const payload = parsePayload(row.payload_json);
   return {
     ...submissionMetadata(row),
-    payload: parsePayload(row.payload_json),
+    video_playback_classification:
+      videoPlaybackClassification(payload.trials),
+    payload,
   };
 }
 

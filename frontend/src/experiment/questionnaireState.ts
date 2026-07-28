@@ -46,6 +46,8 @@ export interface QuestionnaireTrialState {
   assetLoadStatus: AssetLoadStatus;
   videoRevealCompleted: boolean;
   videoReplayUsed: boolean;
+  videoReplayCompleted: boolean;
+  videoInitialRestartCount: number;
 }
 
 export function createEmptyTrialDraft(): TrialResponseDraft {
@@ -80,7 +82,9 @@ export function createQuestionnaireTrialState(): QuestionnaireTrialState {
     assetLoadAttemptCount: 0,
     assetLoadStatus: "not_applicable",
     videoRevealCompleted: false,
-    videoReplayUsed: false
+    videoReplayUsed: false,
+    videoReplayCompleted: false,
+    videoInitialRestartCount: 0
   };
 }
 

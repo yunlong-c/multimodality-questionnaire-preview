@@ -21,6 +21,9 @@ import {
   sequenceCatalog,
   stimulusSetVersion as frozenStimulusSetVersion
 } from "../frontend/src/data/sequenceCatalog.generated.ts";
+import {
+  getVideoPlaybackMetadata
+} from "../frontend/src/data/videoPlaybackManifest.generated.ts";
 import { trialCsvHeaders } from "../frontend/src/experiment/experimentTypes.ts";
 import { TABLE_RENDERER_VERSION } from "../frontend/src/experiment/seriesTableRenderer.ts";
 
@@ -48,6 +51,18 @@ const ALLOCATION_FIELDS = [
   "fallback_reason_code",
   "fallback_reconciled_at"
 ];
+const VIDEO_PLAYBACK_VERSION = "single-play-gif-v1";
+const VIDEO_PLAYBACK_FIELDS = [
+  "video_playback_version",
+  "playback_asset_path",
+  "playback_asset_sha256",
+  "video_replay_used",
+  "video_replay_completed",
+  "video_initial_restart_count"
+];
+const LEGACY_TRIAL_HEADERS = trialCsvHeaders.filter(
+  (field) => !VIDEO_PLAYBACK_FIELDS.includes(field)
+);
 const DEMOGRAPHIC_OPTIONS = {
   gender: ["男", "女"],
   education: ["高中及以下", "大专/高职", "本科", "硕士", "博士"],
@@ -139,6 +154,7 @@ const PARTICIPANT_PRIORITY_HEADERS = [
   "format_assignment",
   "dataset_classification",
   "export_classification",
+  "video_playback_classification",
   ...ALLOCATION_FIELDS,
   "stimulus_set_version",
   "catalog_hash",
@@ -159,6 +175,7 @@ const TRIAL_PRIORITY_HEADERS = [
   "payload_sha256",
   "dataset_classification",
   "export_classification",
+  "video_playback_classification",
   "format_assignment",
   ...ALLOCATION_FIELDS,
   "trial_no",
@@ -177,6 +194,7 @@ const DUPLICATE_HEADERS = [
   "payload_sha256",
   "dataset_classification",
   "export_classification",
+  "video_playback_classification",
   ...ALLOCATION_FIELDS,
   "submitted_at",
   "netlify_created_at",
@@ -195,6 +213,7 @@ const CONFLICT_HEADERS = [
   "payload_sha256",
   "dataset_classification",
   "export_classification",
+  "video_playback_classification",
   ...ALLOCATION_FIELDS,
   "submitted_at",
   "netlify_created_at",
@@ -605,6 +624,10 @@ function parseSubmissionRecord(formRow, sourceRow) {
 
   validatePayloadShape(payload, sourceRow);
   const allocationSchema = detectAllocationSchema(payload.session, sourceRow);
+  const videoPlaybackSchema = detectVideoPlaybackSchema(
+    payload.trials,
+    sourceRow
+  );
 
   const reconciledFields = {};
   for (const field of [
@@ -656,7 +679,12 @@ function parseSubmissionRecord(formRow, sourceRow) {
   }
 
   validateTransportFields(formRow, sourceRow);
-  validatePayloadAgainstFrozenCatalog(payload, sourceRow, allocationSchema);
+  validatePayloadAgainstFrozenCatalog(
+    payload,
+    sourceRow,
+    allocationSchema,
+    videoPlaybackSchema
+  );
   const exportClassification =
     allocationSchema === "legacy"
       ? "pre-randomization-test"
@@ -674,6 +702,11 @@ function parseSubmissionRecord(formRow, sourceRow) {
     classification: exportClassification,
     exportClassification,
     allocationSchema,
+    videoPlaybackSchema,
+    videoPlaybackClassification:
+      videoPlaybackSchema === "current"
+        ? VIDEO_PLAYBACK_VERSION
+        : "pre-single-play",
     submittedAt: reconciledFields.submitted_at,
     netlifyCreatedAt:
       boundedAuditValue(formRow.created_at) ||
@@ -834,6 +867,8 @@ function participantRow(record) {
     participant_id: record.participantId,
     payload_sha256: record.payloadSha256,
     export_classification: record.exportClassification,
+    video_playback_classification:
+      record.videoPlaybackClassification,
     netlify_created_at: record.netlifyCreatedAt,
     netlify_submit_attempt_count:
       record.formRow.submit_attempt_count ?? "",
@@ -857,12 +892,22 @@ function allocationFieldsForOutput(record) {
 function trialRow(record, trial) {
   return {
     ...trial,
+    ...Object.fromEntries(
+      VIDEO_PLAYBACK_FIELDS.map((field) => [
+        field,
+        Object.prototype.hasOwnProperty.call(trial, field)
+          ? trial[field]
+          : ""
+      ])
+    ),
     ...allocationFieldsForOutput(record),
     source_row: record.sourceRow,
     session_id: record.sessionId,
     participant_id: record.participantId,
     payload_sha256: record.payloadSha256,
-    export_classification: record.exportClassification
+    export_classification: record.exportClassification,
+    video_playback_classification:
+      record.videoPlaybackClassification
   };
 }
 
@@ -945,6 +990,8 @@ function duplicateRow(
     payload_sha256: record.payloadSha256,
     dataset_classification: record.payloadClassification,
     export_classification: record.exportClassification,
+    video_playback_classification:
+      record.videoPlaybackClassification,
     ...allocationFieldsForOutput(record),
     submitted_at: record.submittedAt,
     netlify_created_at: record.netlifyCreatedAt,
@@ -1026,6 +1073,8 @@ function conflictRow(record, hashes, classifications) {
     payload_sha256: record.payloadSha256,
     dataset_classification: record.payloadClassification,
     export_classification: record.exportClassification,
+    video_playback_classification:
+      record.videoPlaybackClassification,
     ...allocationFieldsForOutput(record),
     submitted_at: record.submittedAt,
     netlify_created_at: record.netlifyCreatedAt,
@@ -1052,7 +1101,8 @@ function validatePayloadShape(payload, sourceRow) {
 function validatePayloadAgainstFrozenCatalog(
   payload,
   sourceRow,
-  allocationSchema
+  allocationSchema,
+  videoPlaybackSchema
 ) {
   const { session, trials } = payload;
   assertExactKeys(
@@ -1082,7 +1132,9 @@ function validatePayloadAgainstFrozenCatalog(
     assertRecord(trial, `payload_json.trials[${index}]`, sourceRow);
     assertExactKeys(
       trial,
-      trialCsvHeaders,
+      videoPlaybackSchema === "current"
+        ? trialCsvHeaders
+        : LEGACY_TRIAL_HEADERS,
       `payload_json.trials[${index}]`,
       sourceRow
     );
@@ -1117,7 +1169,8 @@ function validatePayloadAgainstFrozenCatalog(
       trial,
       session,
       payload.demographics,
-      sourceRow
+      sourceRow,
+      videoPlaybackSchema
     );
   }
 
@@ -1214,6 +1267,39 @@ function detectAllocationSchema(session, sourceRow) {
     )}.`,
     { sourceRow, code: "ALLOCATION_SCHEMA" }
   );
+}
+
+function detectVideoPlaybackSchema(trials, sourceRow) {
+  const schemas = new Set();
+  for (const [index, trial] of trials.entries()) {
+    const present = VIDEO_PLAYBACK_FIELDS.filter((field) =>
+      Object.prototype.hasOwnProperty.call(trial, field)
+    );
+    if (present.length === 0) {
+      schemas.add("legacy");
+      continue;
+    }
+    if (present.length === VIDEO_PLAYBACK_FIELDS.length) {
+      schemas.add("current");
+      continue;
+    }
+    const missing = VIDEO_PLAYBACK_FIELDS.filter(
+      (field) => !Object.prototype.hasOwnProperty.call(trial, field)
+    );
+    throw new ExportValidationError(
+      `payload_json.trials[${index}] has a partial Video playback schema; missing: ${missing.join(
+        ", "
+      )}.`,
+      { sourceRow, code: "VIDEO_PLAYBACK_SCHEMA" }
+    );
+  }
+  if (schemas.size !== 1) {
+    throw new ExportValidationError(
+      "The five trials mix pre-single-play and single-play Video schemas.",
+      { sourceRow, code: "VIDEO_PLAYBACK_SCHEMA" }
+    );
+  }
+  return schemas.values().next().value;
 }
 
 function validateAllocationMetadata(session, sourceRow) {
@@ -1355,7 +1441,8 @@ function validateTrialAgainstCatalog(
   trial,
   session,
   demographics,
-  sourceRow
+  sourceRow,
+  videoPlaybackSchema
 ) {
   const trialPath = `trial ${trial.trial_no}`;
   assertIntegerInRange(trial.trial_no, 1, 5, `${trialPath}.trial_no`, sourceRow);
@@ -1424,16 +1511,40 @@ function validateTrialAgainstCatalog(
     assertEqual(trial[field], expected, `${trialPath}.${field}`, sourceRow);
   }
 
+  const videoPlayback =
+    session.format_assignment === "video"
+      ? getVideoPlaybackMetadata(presentation.presentation_uid)
+      : null;
+  if (
+    videoPlaybackSchema === "current"
+    && session.format_assignment === "video"
+    && (
+      !videoPlayback
+      || videoPlayback.playback_version !== VIDEO_PLAYBACK_VERSION
+    )
+  ) {
+    throw new ExportValidationError(
+      `${trialPath} has no approved single-play Video presentation.`,
+      { sourceRow, code: "CATALOG_PRESENTATION_MISMATCH" }
+    );
+  }
+  const useSinglePlayVideo =
+    videoPlaybackSchema === "current"
+    && session.format_assignment === "video";
   const presentationExpectations = {
     presentation_uid: presentation.presentation_uid,
     legacy_path: presentation.legacy_path,
     legacy_asset_path: presentation.legacy_path,
-    stimulus_path: presentation.legacy_path,
+    stimulus_path: useSinglePlayVideo
+      ? videoPlayback.playback_asset_path
+      : presentation.legacy_path,
     legacy_asset_sha256: presentation.asset_sha256,
     asset_sha256:
       session.format_assignment === "table"
         ? null
-        : presentation.asset_sha256,
+        : useSinglePlayVideo
+          ? videoPlayback.playback_asset_sha256
+          : presentation.asset_sha256,
     renderer_version:
       session.format_assignment === "table"
         ? TABLE_RENDERER_VERSION
@@ -1441,6 +1552,23 @@ function validateTrialAgainstCatalog(
   };
   for (const [field, expected] of Object.entries(presentationExpectations)) {
     assertEqual(trial[field], expected, `${trialPath}.${field}`, sourceRow);
+  }
+  if (videoPlaybackSchema === "current") {
+    const playbackExpectations = useSinglePlayVideo
+      ? {
+          video_playback_version: videoPlayback.playback_version,
+          playback_asset_path: videoPlayback.playback_asset_path,
+          playback_asset_sha256:
+            videoPlayback.playback_asset_sha256
+        }
+      : {
+          video_playback_version: null,
+          playback_asset_path: null,
+          playback_asset_sha256: null
+        };
+    for (const [field, expected] of Object.entries(playbackExpectations)) {
+      assertEqual(trial[field], expected, `${trialPath}.${field}`, sourceRow);
+    }
   }
 
   for (const field of METADATA_FIELDS) {
@@ -1471,7 +1599,12 @@ function validateTrialAgainstCatalog(
     sourceRow
   );
 
-  validateTrialOperationalFields(trial, session, sourceRow);
+  validateTrialOperationalFields(
+    trial,
+    session,
+    sourceRow,
+    videoPlaybackSchema
+  );
   validateTrialAnswer(trial, sourceRow);
 
   for (const field of [
@@ -1490,7 +1623,12 @@ function validateTrialAgainstCatalog(
   }
 }
 
-function validateTrialOperationalFields(trial, session, sourceRow) {
+function validateTrialOperationalFields(
+  trial,
+  session,
+  sourceRow,
+  videoPlaybackSchema
+) {
   const trialPath = `trial ${trial.trial_no}`;
   assertIsoTimestamp(
     trial.trial_started_at,
@@ -1536,6 +1674,55 @@ function validateTrialOperationalFields(trial, session, sourceRow) {
       `${trialPath}.revision_count cannot exceed visit_count - 1.`,
       { sourceRow, code: "TRIAL_COUNTER_RULE" }
     );
+  }
+
+  if (videoPlaybackSchema === "current") {
+    if (session.format_assignment === "video") {
+      if (
+        typeof trial.video_replay_used !== "boolean"
+        || typeof trial.video_replay_completed !== "boolean"
+      ) {
+        throw new ExportValidationError(
+          `${trialPath} Video replay fields must be boolean.`,
+          { sourceRow, code: "VIDEO_PLAYBACK_FIELDS" }
+        );
+      }
+      if (
+        trial.video_replay_completed === true
+        && trial.video_replay_used !== true
+      ) {
+        throw new ExportValidationError(
+          `${trialPath}.video_replay_completed requires video_replay_used.`,
+          { sourceRow, code: "VIDEO_PLAYBACK_FIELDS" }
+        );
+      }
+      assertIntegerInRange(
+        trial.video_initial_restart_count,
+        0,
+        100000,
+        `${trialPath}.video_initial_restart_count`,
+        sourceRow
+      );
+    } else {
+      assertEqual(
+        trial.video_replay_used,
+        false,
+        `${trialPath}.video_replay_used`,
+        sourceRow
+      );
+      assertEqual(
+        trial.video_replay_completed,
+        false,
+        `${trialPath}.video_replay_completed`,
+        sourceRow
+      );
+      assertEqual(
+        trial.video_initial_restart_count,
+        0,
+        `${trialPath}.video_initial_restart_count`,
+        sourceRow
+      );
+    }
   }
 
   if (session.format_assignment === "table") {

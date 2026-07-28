@@ -21,6 +21,7 @@ const requiredPublicRuntimeFiles = [
   "frontend/src/data/officialManifest.ts",
   "frontend/src/data/releaseInfo.ts",
   "frontend/src/data/sequenceCatalog.generated.ts",
+  "frontend/src/data/videoPlaybackManifest.generated.ts",
 ];
 
 test("Netlify builds the static questionnaire from the repository root", () => {
@@ -41,7 +42,11 @@ test("Netlify builds the static questionnaire from the repository root", () => {
   );
   assert.equal(
     frontendPackage.scripts?.postbuild,
-    "node scripts/assert-static-build.mjs"
+    "tsx scripts/assemble-single-play-static-assets.ts && node scripts/assert-static-build.mjs"
+  );
+  assert.equal(
+    frontendPackage.scripts?.prebuild,
+    "npm run generate:video-playback"
   );
 });
 

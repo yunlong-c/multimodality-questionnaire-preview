@@ -4,11 +4,14 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "generate:video-playback": "tsx scripts/generate-single-play-gifs.ts",
+    "predev": "npm run generate:video-playback",
     "dev": "vite --host 0.0.0.0",
+    "prebuild": "npm run generate:video-playback",
     "build": "tsc && vite build",
-    "postbuild": "node scripts/assert-static-build.mjs",
+    "postbuild": "tsx scripts/assemble-single-play-static-assets.ts && node scripts/assert-static-build.mjs",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "tsx --test tests/admin-csv.test.ts tests/catalog-runtime.test.ts tests/netlify-config.test.ts tests/participant-copy.test.ts tests/questionnaire-navigation.test.ts tests/video-loading.test.ts"
+    "test": "tsx --test tests/admin-csv.test.ts tests/catalog-runtime.test.ts tests/netlify-config.test.ts tests/participant-copy.test.ts tests/questionnaire-navigation.test.ts tests/video-loading.test.ts tests/video-single-play-assets.test.ts"
   },
   "dependencies": {
     "@jspsych/plugin-survey-html-form": "latest",

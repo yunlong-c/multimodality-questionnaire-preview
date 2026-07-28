@@ -1,3 +1,7 @@
+import {
+  VIDEO_REVEAL_DURATION_MS
+} from "../data/videoPlaybackManifest.generated";
+
 export interface ImageLoadOptions {
   signal?: AbortSignal;
   clearOnAbort?: boolean;
@@ -11,6 +15,36 @@ export interface LoadedPlaybackOptions {
 }
 
 export const VIDEO_ASSET_LOAD_TIMEOUT_MS = 90_000;
+export const VIDEO_COMPLETE_REVEAL_DURATION_MS =
+  VIDEO_REVEAL_DURATION_MS;
+
+export type VideoPlaybackMode = "initial" | "replay";
+export type VideoHiddenAction =
+  | "restart_initial_when_visible"
+  | "finish_replay_on_terminal"
+  | "none";
+export type VideoCompletionContext =
+  | "natural_completion"
+  | "completed_revisit"
+  | "interrupted_replay";
+
+export function getVideoHiddenAction(
+  activeMode: VideoPlaybackMode | null
+): VideoHiddenAction {
+  if (activeMode === "initial") {
+    return "restart_initial_when_visible";
+  }
+  if (activeMode === "replay") {
+    return "finish_replay_on_terminal";
+  }
+  return "none";
+}
+
+export function shouldShowVideoTerminalFrame(
+  context: VideoCompletionContext
+): boolean {
+  return context !== "natural_completion";
+}
 
 export async function beginPlaybackAfterLoad({
   preload,

@@ -43,6 +43,8 @@ test("draft, visits, timing, fullscreen metrics, and video quota persist across 
   state.draft.s1 = "-5";
   state.videoRevealCompleted = true;
   state.videoReplayUsed = true;
+  state.videoReplayCompleted = false;
+  state.videoInitialRestartCount = 2;
 
   recordTrialVisit(state, "2026-07-23T01:00:00.000Z");
   addTrialVisibleDuration(state, 1200.4);
@@ -60,6 +62,17 @@ test("draft, visits, timing, fullscreen metrics, and video quota persist across 
   assert.equal(Math.round(state.fullscreenDurationMs), 1051);
   assert.equal(state.videoRevealCompleted, true);
   assert.equal(state.videoReplayUsed, true);
+  assert.equal(state.videoReplayCompleted, false);
+  assert.equal(state.videoInitialRestartCount, 2);
+});
+
+test("video playback lifecycle metrics start from a conservative empty state", () => {
+  const state = createQuestionnaireTrialState();
+
+  assert.equal(state.videoRevealCompleted, false);
+  assert.equal(state.videoReplayUsed, false);
+  assert.equal(state.videoReplayCompleted, false);
+  assert.equal(state.videoInitialRestartCount, 0);
 });
 
 test("revision count changes only after a previously submitted answer changes", () => {
@@ -191,7 +204,13 @@ test("final payload always contains five unique final trials and no answer histo
       (trial) =>
         trial.asset_load_duration_ms === null &&
         trial.asset_load_attempt_count === 0 &&
-        trial.asset_load_status === "not_applicable"
+        trial.asset_load_status === "not_applicable" &&
+        trial.video_playback_version === null &&
+        trial.playback_asset_path === null &&
+        trial.playback_asset_sha256 === null &&
+        trial.video_replay_used === false &&
+        trial.video_replay_completed === false &&
+        trial.video_initial_restart_count === 0
     )
   );
   assert.ok(
@@ -201,4 +220,86 @@ test("final payload always contains five unique final trials and no answer histo
         !("previous_answers" in trial)
     )
   );
+});
+
+test("Video payloads preserve legacy provenance and record the approved playback asset", () => {
+  const stimuli = buildExperimentTrials("video");
+  const trialStates = stimuli.map((stimulus, index) => {
+    const state = createQuestionnaireTrialState();
+    state.draft.point = String(index + 1);
+    if (stimulus.response_type === "point_spd") {
+      for (let row = 1; row <= 5; row += 1) {
+        state.draft[`s${row}` as "s1"] = String(row);
+        state.draft[`p${row}` as "p1"] = "20";
+      }
+    }
+    state.videoReplayUsed = index === 0;
+    state.videoReplayCompleted = index === 0;
+    state.videoInitialRestartCount = index === 0 ? 1 : 0;
+    recordTrialVisit(
+      state,
+      `2026-07-23T01:0${index}:00.000Z`
+    );
+    commitTrialAnswer(
+      state,
+      buildFinalTrialAnswer(stimulus.response_type, state.draft),
+      `2026-07-23T01:1${index}:00.000Z`
+    );
+    return state;
+  });
+  const demographics: ExperimentDemographics = {
+    gender: "female",
+    age: 30,
+    education: "bachelor",
+    experience: "moderate",
+    stat_course: "yes",
+    started_at: "2026-07-23T01:20:00.000Z",
+    submitted_at: "2026-07-23T01:21:00.000Z",
+    duration_ms: 60000
+  };
+
+  const payload = assembleExperimentPayload({
+    stimuli,
+    trialStates,
+    demographics,
+    sessionId: "session-video-test",
+    participantId: "participant-video-test",
+    formatAssignment: "video",
+    datasetClassification: "test",
+    formalCollectionAllowed: false,
+    allocationMetadata: {
+      allocation_id: null,
+      randomization_version: null,
+      allocation_method: null,
+      allocation_status: null,
+      assigned_at: null,
+      fallback_reason_code: null,
+      fallback_reconciled_at: null
+    },
+    startedAt: "2026-07-23T01:00:00.000Z",
+    submittedAt: "2026-07-23T01:21:00.000Z"
+  });
+
+  for (const [index, trial] of payload.trials.entries()) {
+    const stimulus = stimuli[index];
+    assert.equal(trial.legacy_path, stimulus.legacy_path);
+    assert.equal(
+      trial.legacy_asset_sha256,
+      stimulus.legacy_asset_sha256
+    );
+    assert.equal(trial.stimulus_path, stimulus.playback_asset_path);
+    assert.equal(trial.asset_sha256, stimulus.playback_asset_sha256);
+    assert.equal(trial.video_playback_version, "single-play-gif-v1");
+    assert.equal(
+      trial.playback_asset_path,
+      stimulus.playback_asset_path
+    );
+    assert.equal(
+      trial.playback_asset_sha256,
+      stimulus.playback_asset_sha256
+    );
+  }
+  assert.equal(payload.trials[0].video_replay_used, true);
+  assert.equal(payload.trials[0].video_replay_completed, true);
+  assert.equal(payload.trials[0].video_initial_restart_count, 1);
 });

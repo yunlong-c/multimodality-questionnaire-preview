@@ -16,6 +16,9 @@ import {
   sequenceCatalog,
   stimulusSetVersion
 } from "../../frontend/src/data/sequenceCatalog.generated.ts";
+import {
+  getVideoPlaybackMetadata
+} from "../../frontend/src/data/videoPlaybackManifest.generated.ts";
 import { TABLE_RENDERER_VERSION } from "../../frontend/src/experiment/seriesTableRenderer.ts";
 import {
   ExportValidationError,
@@ -86,6 +89,55 @@ test("real frozen Table, Graph and Video payloads all pass the exporter gate", (
 
   assert.equal(result.records.length, 3);
   assert.equal(result.invalidSubmissions.length, 0);
+});
+
+test("pre-single-play records remain exportable with blank playback fields", async () => {
+  const temporaryRoot = await mkdtemp(
+    path.join(os.tmpdir(), "mmq-netlify-pre-single-play-")
+  );
+  const inputPath = path.join(temporaryRoot, "netlify.csv");
+  const outputPath = path.join(temporaryRoot, "organized");
+  const payload = makePreSinglePlayPayload({
+    sessionId: "session-pre-single-play",
+    participantId: "participant-pre-single-play",
+    classification: "formal",
+    format: "video"
+  });
+
+  await writeFile(
+    inputPath,
+    buildNetlifyCsv([submission(payload)]),
+    "utf8"
+  );
+  const summary = await organizeNetlifyFormsExport({
+    inputPath,
+    outputPath
+  });
+
+  assert.equal(summary.classifications.formal.accepted_sessions, 1);
+  const participants = await readCsvRecords(
+    path.join(outputPath, "formal", "participants.csv")
+  );
+  const trials = await readCsvRecords(
+    path.join(outputPath, "formal", "trials.csv")
+  );
+  assert.equal(
+    participants[0].video_playback_classification,
+    "pre-single-play"
+  );
+  assert.equal(trials.length, 5);
+  assert.ok(
+    trials.every(
+      (row) =>
+        row.video_playback_classification === "pre-single-play"
+        && row.video_playback_version === ""
+        && row.playback_asset_path === ""
+        && row.playback_asset_sha256 === ""
+        && row.video_replay_used === ""
+        && row.video_replay_completed === ""
+        && row.video_initial_restart_count === ""
+    )
+  );
 });
 
 test("organizer binds valid submissions to the real frozen catalog and preserves transport diagnostics", async () => {
@@ -177,11 +229,21 @@ test("organizer binds valid submissions to the real frozen catalog and preserves
   assert.equal(formalParticipants[0].netlify_submit_latency_ms, "");
   assert.equal(formalParticipants[0].allocation_method, "variable_block");
   assert.equal(formalParticipants[0].allocation_status, "confirmed");
+  assert.equal(
+    formalParticipants[0].video_playback_classification,
+    "single-play-gif-v1"
+  );
 
   const formalTrials = await readCsvRecords(
     path.join(outputPath, "formal", "trials.csv")
   );
   assert.equal(formalTrials.length, 5);
+  assert.ok(
+    formalTrials.every(
+      (row) =>
+        row.video_playback_classification === "single-play-gif-v1"
+    )
+  );
   assert.ok(
     formalTrials.every(
       (row) =>
@@ -972,7 +1034,7 @@ function makePayload({
 }
 
 function makeLegacyPayload(options) {
-  const payload = makePayload(options);
+  const payload = makePreSinglePlayPayload(options);
   for (const field of [
     "allocation_id",
     "randomization_version",
@@ -983,6 +1045,27 @@ function makeLegacyPayload(options) {
     "fallback_reconciled_at"
   ]) {
     delete payload.session[field];
+  }
+  return payload;
+}
+
+function makePreSinglePlayPayload(options) {
+  const payload = makePayload(options);
+  for (const trial of payload.trials) {
+    for (const field of [
+      "video_playback_version",
+      "playback_asset_path",
+      "playback_asset_sha256",
+      "video_replay_used",
+      "video_replay_completed",
+      "video_initial_restart_count"
+    ]) {
+      delete trial[field];
+    }
+    if (trial.format === "video") {
+      trial.stimulus_path = trial.legacy_path;
+      trial.asset_sha256 = trial.legacy_asset_sha256;
+    }
   }
   return payload;
 }
@@ -1017,6 +1100,15 @@ function makeTrial({
 }) {
   const presentation = sequence.presentations[format];
   const isTable = format === "table";
+  const isVideo = format === "video";
+  const videoPlayback = isVideo
+    ? getVideoPlaybackMetadata(presentation.presentation_uid)
+    : null;
+  if (isVideo && !videoPlayback) {
+    throw new Error(
+      `Missing Video playback metadata for ${presentation.presentation_uid}.`
+    );
+  }
   const isDistribution = responseType === "point_spd";
   const supports = isDistribution ? [1, 2, 3, 4, 5] : [null, null, null, null, null];
   const probabilities = isDistribution
@@ -1045,10 +1137,28 @@ function makeTrial({
     response_type: responseType,
     legacy_path: presentation.legacy_path,
     legacy_asset_path: presentation.legacy_path,
-    stimulus_path: presentation.legacy_path,
+    stimulus_path: isVideo
+      ? videoPlayback.playback_asset_path
+      : presentation.legacy_path,
     legacy_asset_sha256: presentation.asset_sha256,
-    asset_sha256: isTable ? null : presentation.asset_sha256,
+    asset_sha256: isTable
+      ? null
+      : isVideo
+        ? videoPlayback.playback_asset_sha256
+        : presentation.asset_sha256,
     renderer_version: isTable ? TABLE_RENDERER_VERSION : null,
+    video_playback_version: isVideo
+      ? videoPlayback.playback_version
+      : null,
+    playback_asset_path: isVideo
+      ? videoPlayback.playback_asset_path
+      : null,
+    playback_asset_sha256: isVideo
+      ? videoPlayback.playback_asset_sha256
+      : null,
+    video_replay_used: false,
+    video_replay_completed: false,
+    video_initial_restart_count: 0,
     values_sha256: sequence.values_sha256,
     pool2_speed: sequence.pool === "Pool_2" ? sequence.variant : null,
     source_data_file: sequence.source_data_file,

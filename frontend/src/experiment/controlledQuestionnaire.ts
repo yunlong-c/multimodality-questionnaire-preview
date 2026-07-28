@@ -432,6 +432,25 @@ function buildFinalTrialRow({
   if (!answer) {
     throw new Error(`Trial ${stimulus.trial_no} has no final answer.`);
   }
+  const isVideo = stimulus.format === "video";
+  const playbackAssetPath = isVideo
+    ? stimulus.playback_asset_path
+    : null;
+  const playbackAssetSha256 = isVideo
+    ? stimulus.playback_asset_sha256
+    : null;
+  if (
+    isVideo
+    && (
+      stimulus.video_playback_version !== "single-play-gif-v1"
+      || !playbackAssetPath
+      || !playbackAssetSha256
+    )
+  ) {
+    throw new Error(
+      `Video trial ${stimulus.trial_no} has no approved playback asset.`
+    );
+  }
 
   return {
     session_id: sessionId,
@@ -454,10 +473,23 @@ function buildFinalTrialRow({
     response_type: stimulus.response_type,
     legacy_path: stimulus.legacy_path,
     legacy_asset_path: stimulus.legacy_path,
-    stimulus_path: stimulus.legacy_path,
+    stimulus_path:
+      playbackAssetPath ?? stimulus.legacy_path,
     legacy_asset_sha256: stimulus.legacy_asset_sha256,
-    asset_sha256: stimulus.asset_sha256,
+    asset_sha256:
+      playbackAssetSha256 ?? stimulus.asset_sha256,
     renderer_version: stimulus.renderer_version,
+    video_playback_version:
+      isVideo ? "single-play-gif-v1" : null,
+    playback_asset_path:
+      playbackAssetPath,
+    playback_asset_sha256:
+      playbackAssetSha256,
+    video_replay_used: isVideo ? state.videoReplayUsed : false,
+    video_replay_completed:
+      isVideo ? state.videoReplayCompleted : false,
+    video_initial_restart_count:
+      isVideo ? state.videoInitialRestartCount : 0,
     values_sha256: stimulus.values_sha256,
     pool2_speed: stimulus.pool2_speed,
     source_data_file: stimulus.source_data_file,
