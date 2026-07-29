@@ -1059,6 +1059,10 @@ summary:focus-visible,
   line-height: 1.55;
 }
 
+.validation-error:empty {
+  display: none;
+}
+
 .fieldset-reset {
   min-width: 0;
   margin: 0;

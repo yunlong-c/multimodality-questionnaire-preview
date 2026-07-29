@@ -44,13 +44,13 @@ export const DISTRIBUTION_LABELS = [
 export const DISTRIBUTION_COPY = {
   title: "可能结果与概率",
   helper:
-    "请按从小到大的顺序填写 5 个可能值（可相等），并为每个值分配概率；5 个概率之和须为 100%。",
-  guideSummary: "查看填写示例",
+    "请填写 5 个可能数值及其对应概率。仅“可能数值”一列须从小到大排列（可相等）；“对应概率”不要求按大小排列，只需与同一行的数值对应，5 项合计须为 100%。",
+  guideSummary: "查看填写规则与示例",
   guideItems: [
-    "从“最低”到“最高”依次填写 5 个可能值；相邻数值可以相等，但不能递减。",
-    "为每个可能值填写对应概率，5 个概率合计须为 100%。"
+    "“可能数值”一列：从“最低”到“最高”依次填写，可相等，但不能递减。",
+    "“对应概率”一列：不要求按大小排列；每项与同一行的可能数值对应，5 项合计须为 100%。"
   ],
-  exampleNote: "以下数值仅用于说明填写格式，与本题答案无关，请勿照抄。",
+  exampleNote: "以下数值和概率仅用于说明填写格式，与本题答案无关，请勿照抄。",
   exampleTableAriaLabel: "可能数值与概率填写示例",
   exampleTotalLabel: "合计",
   tableAriaLabel: "五个可能数值及对应概率",
@@ -58,7 +58,7 @@ export const DISTRIBUTION_COPY = {
   valueHeader: "可能数值",
   probabilityHeader: "对应概率",
   initialProbabilityTotal: "概率合计：0%（需为100%）",
-  initialOrder: "可能数值需按从小到大填写。"
+  initialOrder: "仅“可能数值”一列需按从小到大填写；“对应概率”不要求排序。"
 } as const;
 
 export const DISTRIBUTION_EXAMPLE_ROWS = [

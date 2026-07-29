@@ -20,7 +20,10 @@ import {
 } from "../src/data/sequenceCatalog.generated";
 import { selectExperimentTrials } from "../src/data/manifestSelectors";
 import type { StimulusSequence } from "../src/data/manifestTypes";
-import { buildTrialHtml } from "../src/experiment/trialRendering";
+import {
+  attachTrialValidation,
+  buildTrialHtml
+} from "../src/experiment/trialRendering";
 import {
   buildCompletionHtml,
   resolveSubmissionState
@@ -187,6 +190,87 @@ function assertOrdered(source: string, fragments: readonly string[]): void {
     );
     cursor = index;
   }
+}
+
+class FakeTrialInput {
+  value = "";
+  focused = false;
+  private readonly inputListeners = new Set<() => void>();
+
+  addEventListener(type: string, listener: () => void): void {
+    if (type === "input") {
+      this.inputListeners.add(listener);
+    }
+  }
+
+  removeEventListener(type: string, listener: () => void): void {
+    if (type === "input") {
+      this.inputListeners.delete(listener);
+    }
+  }
+
+  dispatchInput(): void {
+    for (const listener of this.inputListeners) {
+      listener();
+    }
+  }
+
+  focus(): void {
+    this.focused = true;
+  }
+}
+
+function createTrialValidationHarness(): {
+  form: HTMLFormElement;
+  inputs: Map<string, FakeTrialInput>;
+  totalFeedback: { textContent: string; dataset: Record<string, string> };
+  orderFeedback: { textContent: string; dataset: Record<string, string> };
+  validationMessage: { textContent: string };
+} {
+  const fieldNames = [
+    "s1",
+    "s2",
+    "s3",
+    "s4",
+    "s5",
+    "p1",
+    "p2",
+    "p3",
+    "p4",
+    "p5"
+  ];
+  const inputs = new Map(
+    fieldNames.map((name) => [name, new FakeTrialInput()])
+  );
+  const totalFeedback = { textContent: "", dataset: {} };
+  const orderFeedback = { textContent: "", dataset: {} };
+  const validationMessage = { textContent: "" };
+  const form = {
+    elements: {
+      namedItem: (name: string) => inputs.get(name) ?? null
+    },
+    querySelector: (selector: string) => {
+      if (selector === "[data-probability-total]") {
+        return totalFeedback;
+      }
+      if (selector === "[data-support-order]") {
+        return orderFeedback;
+      }
+      if (selector === "#trial-validation-message") {
+        return validationMessage;
+      }
+      return null;
+    },
+    reportValidity: () => true
+  } as unknown as HTMLFormElement;
+
+  return {
+    form,
+    inputs,
+    totalFeedback,
+    orderFeedback,
+    validationMessage
+  };
 }
 
 test("pre-task and trial copy remove locked strategy cues", () => {
@@ -397,6 +481,8 @@ test("trial five renders a collapsed read-only example and leaves answer inputs 
   assert.match(distributionText, /可能数值/);
   assert.match(distributionText, /从小到大/);
   assert.match(distributionText, /概率/);
+  assert.match(distributionText, /对应概率.{0,10}不要求按大小排列/);
+  assert.match(distributionText, /同一行的可能数值对应/);
   assert.match(
     distributionText,
     /(?:合计|总和).{0,12}100%|100%.{0,12}(?:合计|总和)/
@@ -414,11 +500,14 @@ test("trial five renders a collapsed read-only example and leaves answer inputs 
     /<details class="example-panel">([\s\S]*?)<\/details>/
   )?.[0];
   assert.ok(examplePanel);
-  assert.match(examplePanel, /<summary>查看填写示例<\/summary>/);
+  assert.match(examplePanel, /<summary>查看填写规则与示例<\/summary>/);
   assert.doesNotMatch(examplePanel, /<details[^>]*\sopen(?:\s|>)/);
   assert.doesNotMatch(examplePanel, /<input\b/);
   assert.match(examplePanel, /class="distribution-example-table"/);
-  assert.match(examplePanel, /以下数值仅用于说明填写格式，与本题答案无关，请勿照抄。/);
+  assert.match(
+    examplePanel,
+    /以下数值和概率仅用于说明填写格式，与本题答案无关，请勿照抄。/
+  );
 
   const exampleBody = examplePanel.match(/<tbody>([\s\S]*?)<\/tbody>/)?.[1];
   assert.ok(exampleBody);
@@ -435,6 +524,78 @@ test("trial five renders a collapsed read-only example and leaves answer inputs 
   assert.match(stylesSource, /\.distribution-example-table\s*\{[\s\S]*?width:\s*100%/);
   assert.match(stylesSource, /table-layout:\s*fixed/);
   assert.doesNotMatch(trialRenderingSource, /\/assets\/ui\/example\.png/);
+});
+
+test("distribution validation accepts unsorted probabilities and clears stale errors after edits", () => {
+  const fifthTrial = selectExperimentTrials(
+    sequenceCatalog as readonly StimulusSequence[],
+    "table",
+    stimulusSetVersion,
+    catalogHash
+  )[4];
+  const {
+    form,
+    inputs,
+    totalFeedback,
+    orderFeedback,
+    validationMessage
+  } = createTrialValidationHarness();
+  const controller = attachTrialValidation(fifthTrial, form);
+
+  for (const [name, value] of [
+    ["s1", "1"],
+    ["s2", "0"],
+    ["s3", "2"],
+    ["s4", "3"],
+    ["s5", "4"],
+    ["p1", "40"],
+    ["p2", "5"],
+    ["p3", "30"],
+    ["p4", "10"],
+    ["p5", "15"]
+  ]) {
+    const input = inputs.get(name);
+    assert.ok(input);
+    input.value = value;
+  }
+
+  assert.equal(controller.validate(), false);
+  assert.match(validationMessage.textContent, /“可能数值”一列/);
+  assert.match(validationMessage.textContent, /“对应概率”不要求排序/);
+
+  const correctedInput = inputs.get("s2");
+  assert.ok(correctedInput);
+  correctedInput.value = "2";
+  correctedInput.dispatchInput();
+
+  assert.equal(validationMessage.textContent, "");
+  assert.match(
+    stylesSource,
+    /\.validation-error:empty\s*\{[\s\S]*?display:\s*none/
+  );
+  assert.equal(orderFeedback.dataset.state, "valid");
+  assert.equal(
+    orderFeedback.textContent,
+    "“可能数值”一列顺序正确；“对应概率”不要求排序。"
+  );
+  assert.equal(totalFeedback.dataset.state, "valid");
+  assert.equal(totalFeedback.textContent, "概率合计：100%（需为100%）");
+  assert.equal(controller.validate(), true);
+
+  const finalProbabilityInput = inputs.get("p5");
+  assert.ok(finalProbabilityInput);
+  finalProbabilityInput.value = "14";
+  finalProbabilityInput.dispatchInput();
+  assert.equal(controller.validate(), false);
+  assert.match(validationMessage.textContent, /当前合计为 99%/);
+
+  finalProbabilityInput.value = "15";
+  finalProbabilityInput.dispatchInput();
+  assert.equal(validationMessage.textContent, "");
+  assert.equal(totalFeedback.dataset.state, "valid");
+  assert.equal(controller.validate(), true);
+
+  controller.cleanup();
 });
 
 test("compact participant chrome preserves all stimulus dimensions", () => {
