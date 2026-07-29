@@ -37,6 +37,10 @@ export interface StimulusInteractionController {
   cleanup: () => void;
 }
 
+export interface StimulusInteractionOptions {
+  onPrimaryAssetReady?: () => void;
+}
+
 export interface TrialValidationController {
   validate: () => boolean;
   refresh: () => void;
@@ -255,10 +259,24 @@ export function buildDemographicHtml(): string {
 export function attachStimulusInteractions(
   stimulus: AssembledTrial,
   state: QuestionnaireTrialState,
-  setNavigationLocked: (locked: boolean) => void
+  setNavigationLocked: (locked: boolean) => void,
+  options: StimulusInteractionOptions = {}
 ): StimulusInteractionController {
   const fullscreenController = attachFullscreenInteraction();
   const cleanupCallbacks: Array<() => void> = [fullscreenController.cleanup];
+  let primaryAssetReadyNotified = false;
+  let interactionsCleanedUp = false;
+  const notifyPrimaryAssetReady = (): void => {
+    if (primaryAssetReadyNotified || interactionsCleanedUp) {
+      return;
+    }
+    primaryAssetReadyNotified = true;
+    try {
+      options.onPrimaryAssetReady?.();
+    } catch {
+      // Background prefetch must never affect the visible stimulus flow.
+    }
+  };
 
   if (stimulus.format === "graph") {
     const image =
@@ -278,6 +296,9 @@ export function attachStimulusInteractions(
           performance.now(),
           status
         );
+        if (status === "loaded") {
+          notifyPrimaryAssetReady();
+        }
       };
       const handleLoad = (): void => finish("loaded");
       const handleError = (): void => finish("failed");
@@ -576,6 +597,9 @@ export function attachStimulusInteractions(
                   "loaded"
                 );
               }
+              if (mode === "initial") {
+                notifyPrimaryAssetReady();
+              }
               image.hidden = false;
               image.setAttribute("aria-busy", "false");
               if (loadingPanel) {
@@ -674,6 +698,7 @@ export function attachStimulusInteractions(
   return {
     snapshot: fullscreenController.snapshot,
     cleanup: () => {
+      interactionsCleanedUp = true;
       for (const cleanup of cleanupCallbacks.reverse()) {
         cleanup();
       }
