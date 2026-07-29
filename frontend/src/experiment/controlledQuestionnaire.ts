@@ -13,6 +13,10 @@ import type {
   StartExperimentOptions
 } from "./experimentTypes";
 import {
+  createStimulusPrefetchManager,
+  prefetchNextStimulus
+} from "./assetPrefetch";
+import {
   TRIAL_RESPONSE_FIELD_NAMES,
   addFullscreenInteraction,
   addTrialVisibleDuration,
@@ -85,6 +89,7 @@ export function runControlledQuestionnaire({
   const sessionStartedAt = new Date().toISOString();
   const stimuli = buildExperimentTrials(formatAssignment);
   const trialStates = stimuli.map(() => createQuestionnaireTrialState());
+  const stimulusPrefetch = createStimulusPrefetchManager();
   const effectiveDatasetClassification: DatasetClassification =
     formalCollectionAllowed && datasetClassification === "formal"
       ? "formal"
@@ -172,6 +177,7 @@ export function runControlledQuestionnaire({
   };
 
   const renderDemographics = (): void => {
+    stimulusPrefetch.dispose();
     demographicsStartedAt = new Date().toISOString();
     demographicsActive = true;
     activeVisibleStartedAt = null;
@@ -326,7 +332,16 @@ export function runControlledQuestionnaire({
     activeInteraction = attachStimulusInteractions(
       stimulus,
       state,
-      setNavigationLocked
+      setNavigationLocked,
+      {
+        onPrimaryAssetReady: () => {
+          prefetchNextStimulus(
+            stimulusPrefetch,
+            stimuli,
+            trialIndex
+          );
+        }
+      }
     );
 
     previousButton?.addEventListener("click", () => {

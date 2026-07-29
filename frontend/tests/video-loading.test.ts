@@ -114,6 +114,25 @@ class FakePlaybackDocument extends EventTarget {
   }
 }
 
+class FakeGraphDocument extends EventTarget {
+  hidden = false;
+  title = "graph test";
+
+  constructor(private readonly image: FakeImage) {
+    super();
+  }
+
+  querySelector<T>(selector: string): T | null {
+    if (
+      selector === "[data-fullscreen-media]" ||
+      selector === "[data-graph-image]"
+    ) {
+      return this.image as T;
+    }
+    return null;
+  }
+}
+
 interface PlaybackHarness {
   document: FakePlaybackDocument;
   image: AutoLoadingImage;
@@ -388,14 +407,23 @@ test("initial completion unlocks navigation without replacing the GIF source", a
   let controller:
     | ReturnType<typeof attachStimulusInteractions>
     | undefined;
+  let primaryAssetReadyCount = 0;
 
   try {
     controller = attachStimulusInteractions(
       videoStimulusStub(),
       state,
-      (locked) => navigationLocks.push(locked)
+      (locked) => navigationLocks.push(locked),
+      {
+        onPrimaryAssetReady: () => {
+          primaryAssetReadyCount += 1;
+        }
+      }
     );
+    assert.equal(primaryAssetReadyCount, 0);
     await flushPlaybackLoading();
+    assert.equal(primaryAssetReadyCount, 1);
+    assert.equal(state.videoReplayUsed, false);
 
     assert.match(
       harness.image.src,
@@ -422,6 +450,114 @@ test("initial completion unlocks navigation without replacing the GIF source", a
     controller?.cleanup();
     harness.restore();
   }
+});
+
+test("Graph notifies readiness only after its visible image loads", async () => {
+  const image = new FakeImage();
+  const document = new FakeGraphDocument(image);
+  const documentDescriptor = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "document"
+  );
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: document
+  });
+  const state = createQuestionnaireTrialState();
+  let readyCount = 0;
+  const controller = attachStimulusInteractions(
+    { format: "graph" } as AssembledTrial,
+    state,
+    () => undefined,
+    {
+      onPrimaryAssetReady: () => {
+        readyCount += 1;
+      }
+    }
+  );
+
+  try {
+    assert.equal(readyCount, 0);
+    image.naturalWidth = 100;
+    image.dispatchEvent(new Event("load"));
+    await Promise.resolve();
+    assert.equal(readyCount, 1);
+    image.dispatchEvent(new Event("load"));
+    assert.equal(readyCount, 1);
+  } finally {
+    controller.cleanup();
+    if (documentDescriptor) {
+      Object.defineProperty(
+        globalThis,
+        "document",
+        documentDescriptor
+      );
+    } else {
+      Reflect.deleteProperty(globalThis, "document");
+    }
+  }
+});
+
+test("Graph error and cleanup-before-microtask never notify readiness", async () => {
+  const installGraphDocument = (image: FakeImage): (() => void) => {
+    const documentDescriptor = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "document"
+    );
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: new FakeGraphDocument(image)
+    });
+    return () => {
+      if (documentDescriptor) {
+        Object.defineProperty(
+          globalThis,
+          "document",
+          documentDescriptor
+        );
+      } else {
+        Reflect.deleteProperty(globalThis, "document");
+      }
+    };
+  };
+
+  const failedImage = new FakeImage();
+  let restoreDocument = installGraphDocument(failedImage);
+  let readyCount = 0;
+  let controller = attachStimulusInteractions(
+    { format: "graph" } as AssembledTrial,
+    createQuestionnaireTrialState(),
+    () => undefined,
+    {
+      onPrimaryAssetReady: () => {
+        readyCount += 1;
+      }
+    }
+  );
+  failedImage.dispatchEvent(new Event("error"));
+  await Promise.resolve();
+  assert.equal(readyCount, 0);
+  controller.cleanup();
+  restoreDocument();
+
+  const completeImage = new FakeImage();
+  completeImage.complete = true;
+  completeImage.naturalWidth = 100;
+  restoreDocument = installGraphDocument(completeImage);
+  controller = attachStimulusInteractions(
+    { format: "graph" } as AssembledTrial,
+    createQuestionnaireTrialState(),
+    () => undefined,
+    {
+      onPrimaryAssetReady: () => {
+        readyCount += 1;
+      }
+    }
+  );
+  controller.cleanup();
+  await Promise.resolve();
+  assert.equal(readyCount, 0);
+  restoreDocument();
 });
 
 test("hidden initial playback restarts from the beginning without using replay", async () => {

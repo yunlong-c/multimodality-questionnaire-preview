@@ -11,7 +11,7 @@
     "build": "tsc && vite build",
     "postbuild": "tsx scripts/assemble-single-play-static-assets.ts && node scripts/assert-static-build.mjs",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "tsx --test tests/admin-csv.test.ts tests/catalog-runtime.test.ts tests/netlify-config.test.ts tests/participant-copy.test.ts tests/questionnaire-navigation.test.ts tests/video-loading.test.ts tests/video-single-play-assets.test.ts"
+    "test": "tsx --test tests/admin-csv.test.ts tests/asset-prefetch.test.ts tests/catalog-runtime.test.ts tests/netlify-config.test.ts tests/participant-copy.test.ts tests/questionnaire-navigation.test.ts tests/video-loading.test.ts tests/video-single-play-assets.test.ts"
   },
   "dependencies": {
     "@jspsych/plugin-survey-html-form": "latest",
