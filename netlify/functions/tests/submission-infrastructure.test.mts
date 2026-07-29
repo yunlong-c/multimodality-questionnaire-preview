@@ -98,7 +98,7 @@ test("submission and scheduled mirror functions expose the intended contracts", 
   assert.match(submit, /path: "\/api\/submit"/);
   assert.match(submit, /method: "POST"/);
   assert.match(submit, /aggregateBy: \["domain", "ip"\]/);
-  assert.match(scheduled, /schedule: "\*\/15 \* \* \* \*"/);
+  assert.match(scheduled, /schedule: "0 \*\/2 \* \* \*"/);
 });
 
 test("Forms status is named accepted and never overstated as verified", async () => {
