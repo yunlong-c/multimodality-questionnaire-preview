@@ -721,6 +721,14 @@ export function attachTrialValidation(
   const orderFeedback =
     form.querySelector<HTMLElement>("[data-support-order]");
 
+  const clearValidationMessage = (): void => {
+    const validationMessage =
+      form.querySelector<HTMLDivElement>("#trial-validation-message");
+    if (validationMessage) {
+      validationMessage.textContent = "";
+    }
+  };
+
   const readSupport = (): Array<number | null> =>
     supportInputs.map((input) => numberOrNull(input.value));
   const readProbabilities = (): Array<number | null> =>
@@ -763,9 +771,9 @@ export function attachTrialValidation(
     if (orderFeedback) {
       orderFeedback.textContent = supportComplete
         ? supportOrdered
-          ? "数值顺序符合从小到大的要求。"
-          : "请检查数值顺序：后一个数值不能小于前一个。"
-        : "可能数值需按从小到大填写。";
+          ? "“可能数值”一列顺序正确；“对应概率”不要求排序。"
+          : "请检查“可能数值”一列：后一个数值不能小于前一个。"
+        : "仅“可能数值”一列需按从小到大填写；“对应概率”不要求排序。";
       orderFeedback.dataset.state = supportOrdered
         ? "valid"
         : supportComplete
@@ -803,7 +811,7 @@ export function attachTrialValidation(
     for (let index = 1; index < support.length; index += 1) {
       if ((support[index - 1] as number) > (support[index] as number)) {
         validationMessage.textContent =
-          "请确保 5 个可能数值按从小到大的顺序填写，可相等但不能递减。";
+          "请按从小到大填写“可能数值”一列（可相等）；“对应概率”不要求排序。";
         supportInputs[index]?.focus();
         return false;
       }
@@ -824,6 +832,7 @@ export function attachTrialValidation(
   };
 
   for (const input of [...supportInputs, ...probabilityInputs]) {
+    input.addEventListener("input", clearValidationMessage);
     input.addEventListener("input", refresh);
   }
   refresh();
@@ -833,6 +842,7 @@ export function attachTrialValidation(
     refresh,
     cleanup: () => {
       for (const input of [...supportInputs, ...probabilityInputs]) {
+        input.removeEventListener("input", clearValidationMessage);
         input.removeEventListener("input", refresh);
       }
     }
