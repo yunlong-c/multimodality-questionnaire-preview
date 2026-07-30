@@ -450,6 +450,7 @@ test("removed participant copy does not remain in rendered sources", () => {
 });
 
 test("trial five renders a collapsed read-only example and leaves answer inputs blank", () => {
+  assert.equal(DISTRIBUTION_COPY.title, "第 5 题：可能结果与概率");
   assert.deepEqual([...DISTRIBUTION_LABELS], [
     "最低",
     "较低",
@@ -534,6 +535,34 @@ test("trial five renders a collapsed read-only example and leaves answer inputs 
   assert.match(stylesSource, /\.distribution-example-table\s*\{[\s\S]*?width:\s*100%/);
   assert.match(stylesSource, /table-layout:\s*fixed/);
   assert.doesNotMatch(trialRenderingSource, /\/assets\/ui\/example\.png/);
+});
+
+test("only trial five identifies the probability section as part of question five", () => {
+  for (const format of ["table", "graph", "video"] as const) {
+    const trials = selectExperimentTrials(
+      sequenceCatalog as readonly StimulusSequence[],
+      format,
+      stimulusSetVersion,
+      catalogHash
+    );
+
+    for (const [index, trial] of trials.entries()) {
+      const trialHtml = buildTrialHtml(trial);
+      const headingMatches =
+        trialHtml.match(/第 5 题：可能结果与概率/g) ?? [];
+
+      if (index === 4) {
+        assert.equal(headingMatches.length, 1, `${format} trial 5`);
+        assert.match(
+          trialHtml,
+          /<section class="field-group field-group--distribution" aria-labelledby="distribution-title">[\s\S]*?<h3 id="distribution-title">第 5 题：可能结果与概率<\/h3>/
+        );
+      } else {
+        assert.equal(headingMatches.length, 0, `${format} trial ${index + 1}`);
+        assert.doesNotMatch(trialHtml, /field-group--distribution/);
+      }
+    }
+  }
 });
 
 test("distribution validation accepts unsorted probabilities and clears stale errors after edits", () => {
