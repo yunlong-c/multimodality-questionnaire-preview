@@ -42,7 +42,7 @@ export const DISTRIBUTION_LABELS = [
 ] as const;
 
 export const DISTRIBUTION_COPY = {
-  title: "可能结果与概率",
+  title: "第 5 题：可能结果与概率",
   helper:
     "请填写 5 个可能数值及其对应概率。仅“可能数值”一列须从小到大排列（可相等）；“对应概率”不要求按大小排列，只需与同一行的数值对应，5 项合计须为 100%。",
   guideSummary: "查看填写规则与示例",
