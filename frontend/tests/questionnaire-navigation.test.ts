@@ -97,6 +97,39 @@ test("revision count changes only after a previously submitted answer changes", 
   );
 });
 
+test("arbitrary decimal answers survive finalization without rounding", () => {
+  const state = createQuestionnaireTrialState();
+  state.draft.point = "3.445";
+  state.draft.s1 = "-10.125";
+  state.draft.s2 = "0.0001";
+  state.draft.s3 = "3.44";
+  state.draft.s4 = "3.44";
+  state.draft.s5 = "99.99999";
+  state.draft.p1 = "33.3333";
+  state.draft.p2 = "33.3333";
+  state.draft.p3 = "33.3334";
+  state.draft.p4 = "0";
+  state.draft.p5 = "0";
+
+  const answer = buildFinalTrialAnswer("point_spd", state.draft);
+
+  assert.deepEqual(answer, {
+    point: 3.445,
+    s1: -10.125,
+    s2: 0.0001,
+    s3: 3.44,
+    s4: 3.44,
+    s5: 99.99999,
+    p1: 33.3333,
+    p2: 33.3333,
+    p3: 33.3334,
+    p4: 0,
+    p5: 0,
+    sumS: 96.75509,
+    sumP: 100
+  });
+});
+
 test("asset loading records attempts, cumulative duration, and eventual success without identifiers", () => {
   const state = createQuestionnaireTrialState();
 

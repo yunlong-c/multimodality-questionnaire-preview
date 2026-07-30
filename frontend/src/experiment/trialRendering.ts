@@ -76,7 +76,7 @@ export function buildTrialHtml(stimulus: AssembledTrial): string {
       <input
         id="point-prediction"
         type="number"
-        step="0.1"
+        step="any"
         inputmode="decimal"
         name="point"
         autocomplete="off"
@@ -151,7 +151,7 @@ export function buildTrialHtml(stimulus: AssembledTrial): string {
                       <input
                         id="${supportName}"
                         type="number"
-                        step="0.1"
+                        step="any"
                         inputmode="decimal"
                         name="${supportName}"
                         aria-label="${label}可能数值"
@@ -164,7 +164,7 @@ export function buildTrialHtml(stimulus: AssembledTrial): string {
                       <input
                         id="${probabilityName}"
                         type="number"
-                        step="0.1"
+                        step="any"
                         min="0"
                         max="100"
                         inputmode="decimal"
@@ -1148,7 +1148,10 @@ function getOrCreateValidationMessage(
 function formatFeedbackNumber(value: number): string {
   return Number.isInteger(value)
     ? String(value)
-    : value.toFixed(1).replace(/\.0$/, "");
+    : value
+        .toFixed(6)
+        .replace(/0+$/, "")
+        .replace(/\.$/, "");
 }
 
 function numberOrNull(input?: string | null): number | null {
