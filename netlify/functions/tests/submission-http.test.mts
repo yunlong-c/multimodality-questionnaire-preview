@@ -513,6 +513,42 @@ test("prediction values and probability distributions are validated server-side"
   assert.equal(repository.calls.length, 0);
 });
 
+test("arbitrary decimal answers are accepted and preserved server-side", async () => {
+  const repository = new FakeRepository();
+  const payload = experimentPayload();
+  payload.trials.forEach((trial, index) => {
+    trial.point = 3.445 + index / 10_000;
+  });
+  Object.assign(payload.trials[4], {
+    s1: -10.125,
+    s2: 0.0001,
+    s3: 3.44,
+    s4: 3.44,
+    s5: 99.99999,
+    p1: 33.3333,
+    p2: 33.3333,
+    p3: 33.3334,
+    p4: 0,
+    p5: 0,
+    sumS: 96.75509,
+    sumP: 100,
+  });
+
+  const response = await createSubmitHandler(() => repository)(
+    jsonRequest(requestBodyForPayload(payload)),
+  );
+
+  assert.equal(response.status, 201);
+  assert.equal(repository.calls.length, 1);
+  const storedPayload = JSON.parse(repository.calls[0].payloadJson);
+  assert.equal(storedPayload.trials[0].point, 3.445);
+  assert.deepEqual(
+    storedPayload.trials[4].p1,
+    33.3333,
+  );
+  assert.equal(storedPayload.trials[4].s5, 99.99999);
+});
+
 test("timing, counters, asset performance, and demographics are strictly validated", async () => {
   const repository = new FakeRepository();
   const handler = createSubmitHandler(() => repository);

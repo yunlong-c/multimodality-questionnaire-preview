@@ -519,6 +519,16 @@ test("trial five renders a collapsed read-only example and leaves answer inputs 
   assert.equal(formalInputs.length, 11);
   for (const input of formalInputs) {
     assert.doesNotMatch(input, /\svalue=/);
+    assert.match(input, /\sstep="any"/);
+    assert.doesNotMatch(input, /\sstep="0\.1"/);
+  }
+  const probabilityInputs = formalInputs.filter((input) =>
+    /\sname="p[1-5]"/.test(input)
+  );
+  assert.equal(probabilityInputs.length, 5);
+  for (const input of probabilityInputs) {
+    assert.match(input, /\smin="0"/);
+    assert.match(input, /\smax="100"/);
   }
 
   assert.match(stylesSource, /\.distribution-example-table\s*\{[\s\S]*?width:\s*100%/);
@@ -582,12 +592,37 @@ test("distribution validation accepts unsorted probabilities and clears stale er
   assert.equal(totalFeedback.textContent, "概率合计：100%（需为100%）");
   assert.equal(controller.validate(), true);
 
+  for (const [name, value] of [
+    ["s1", "1.11"],
+    ["s2", "2.22"],
+    ["s3", "3.44"],
+    ["s4", "3.44"],
+    ["s5", "4.567"],
+    ["p1", "40.125"],
+    ["p2", "4.875"],
+    ["p3", "30"],
+    ["p4", "10"],
+    ["p5", "15"]
+  ]) {
+    const input = inputs.get(name);
+    assert.ok(input);
+    input.value = value;
+    input.dispatchInput();
+  }
+  assert.equal(orderFeedback.dataset.state, "valid");
+  assert.equal(totalFeedback.textContent, "概率合计：100%（需为100%）");
+  assert.equal(controller.validate(), true);
+
   const finalProbabilityInput = inputs.get("p5");
   assert.ok(finalProbabilityInput);
-  finalProbabilityInput.value = "14";
+  finalProbabilityInput.value = "14.95";
   finalProbabilityInput.dispatchInput();
   assert.equal(controller.validate(), false);
-  assert.match(validationMessage.textContent, /当前合计为 99%/);
+  assert.equal(
+    totalFeedback.textContent,
+    "概率合计：99.95%（需为100%）"
+  );
+  assert.match(validationMessage.textContent, /当前合计为 99\.95%/);
 
   finalProbabilityInput.value = "15";
   finalProbabilityInput.dispatchInput();
